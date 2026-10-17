@@ -24,6 +24,18 @@ STAGES = {
     ]),
     'stage2': dict(title='Stage 2 - image retrieval relocalisation, val laps (db = training run)', out='outputs/stage2_summary',
                    exps=[], notes=[]),
+    'stage3': dict(title='Stages 3-4 - real-time online localiser, val laps (map = training run t < 897 s)',
+                   out='outputs/stage3_summary', exps=[
+        ('Exp01 dead reckoning (car state)', 'outputs/01_deadreckoning/pred_val.csv'),
+        ('Exp11 MegaLoc retrieval 7 cams', 'outputs/11_retrieval_megaloc/pred.csv'),
+        ('Exp12 retrieval + PnP (410 ms)', 'outputs/12_reloc_pnp/val/pred.csv'),
+        ('Exp21 EKF + map PnP, 7 cams (41 ms)', 'outputs/21_online/val/pred.csv'),
+    ], notes=[
+        'Exp21: car-state EKF prediction (vx, vy, wz) + cached triangulated map of the training run + guided matching +',
+        '6-DoF multi-camera PnP (planar output) + gated update + MegaLoc relocalisation when lost. Causal, every frame.',
+        'Runtime per image set (7 cameras, JPEG decode included): Exp21 40.7 ms mean on an H100 NVL + EPYC 9454; Exp12 ~410 ms.',
+        'Parameters chosen on the tune lap (632-752 s) and dev2 lap (752-897 s) only; val computed once.',
+    ]),
 }
 KEYS = [('pos_rmse', 'pos RMSE [m]'), ('lat_rmse', 'lat RMSE [m]'), ('lon_rmse', 'lon RMSE [m]'), ('yaw_rmse_deg', 'yaw RMSE [°]'),
         ('pos_median', 'median [m]'), ('within_100', '≤1 m [%]'), ('rpe_1s_yaw_rmse_deg', 'RPE1s yaw [°]'),

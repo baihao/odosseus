@@ -17,6 +17,7 @@ SPLITS = {
     'train': (0.0, 897.0),
     'val': (897.0, 1120.0),
     'tune': (632.0, 752.0),   # one training lap used for tuning VO/fusion parameters
+    'dev2': (752.0, 897.0),   # second development lap (stage 4), map = train minus this lap +-10 s
     'all': (0.0, 1e9),
 }
 
@@ -97,3 +98,37 @@ def first_pose(ts_ns):
     """Initial pose allowed by the rules: GT at the first stamp of the run/segment."""
     x, y, yaw = interp_gt([ts_ns])
     return float(x[0]), float(y[0]), float(yaw[0])
+
+
+class Run:
+    """Query-side access to an extracted run (e.g. the hidden test run): images, allowed car-state fields,
+    calibration, and ONLY the first pose of the run (rules: the first pose may be used as the initial pose)."""
+
+    def __init__(self, root):
+        self.root = root
+        self._f = {}
+
+    def frames(self, cam):
+        if cam not in self._f:
+            d = pd.read_csv(f'{self.root}/images/{cam}.csv')
+            d['path'] = self.root + '/' + d.file
+            self._f[cam] = d.sort_values('stamp_ns').reset_index(drop=True)
+        return self._f[cam]
+
+    def allowed_state(self):
+        d = pd.read_csv(f'{self.root}/state.csv', usecols=lambda c: c in ('header.stamp.sec', 'header.stamp.nanosec')
+                        or c in ALLOWED_STATE)
+        d['timestamp_ns'] = d['header.stamp.sec'].astype(np.int64) * 10**9 + d['header.stamp.nanosec'].astype(np.int64)
+        return d.sort_values('timestamp_ns').reset_index(drop=True)[ALLOWED_STATE]
+
+    def calib(self):
+        c = json.load(open(f'{self.root}/calib.json'))
+        for v in c.values():
+            v['K'] = np.array(v['K']).reshape(3, 3); v['D'] = np.array(v['D']); v['T_base_cam'] = np.array(v['T_base_cam'])
+        return c
+
+    def first_pose(self):
+        """(stamp_ns, x, y, yaw) of the first pose of the run: first_pose.csv if given, else the first GT row."""
+        p = f'{self.root}/first_pose.csv'
+        r = pd.read_csv(p if os.path.exists(p) else f'{self.root}/gt.csv', nrows=1).iloc[0]
+        return int(r.timestamp_ns), float(r.x), float(r.y), float(r.yaw)

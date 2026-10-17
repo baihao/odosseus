@@ -1,8 +1,13 @@
-# Camera-based localisation on a race track: prototype (stages 1 and 2)
+# Camera-based localisation on a race track
+
+**Final method (Exp21): val 0.097 m position RMSE, 0.067 m lateral, 0.094° yaw, 100 % within 0.5 m, 40.7 ms per
+7-camera image set** (H100 NVL). See [Stages 3–4](#stages-34-real-time-online-localiser-final-method) and
+`outputs/21_online/README.md`. Submission for a new run: `bash scripts/run_submission.sh <run.mcap>`.
 
 Task: estimate the x, y and yaw of the race car (`constructor0/base_link` in `map`) from its 7 cameras.
 Data: one night session at Yas Marina, 1194 s long. The score is position RMSE (see the dataset README and
-`tools/evaluate.py`). Progress log: [`progress_log.md`](progress_log.md). Each experiment has its own README in `outputs/<exp>/`.
+`tools/evaluate.py`). Progress log: [`progress_log.md`](progress_log.md). Detailed explanation of all experiments, with open questions for the
+dataset provider: [`experiments_explained.md`](experiments_explained.md). Each experiment has its own README in `outputs/<exp>/`.
 
 ## Layout
 
@@ -16,19 +21,34 @@ Data: one night session at Yas Marina, 1194 s long. The score is position RMSE (
 | `odo/vo2map.py`, `odo/eval_vo.py` | evaluation of third-party VO (VGGT-Long, Pi-Long, MASt3R-SLAM) |
 | `odo/vo_gyro.py` | VO combined with the gyro (VO used as a motion model) |
 | `odo/vpr.py`, `odo/retrieval.py`, `odo/reloc_pnp.py` | stage 2: retrieval, then metric relocalisation |
+| `odo/map_build.py` | stage 3: cached 3D feature map of the training run (SuperPoint + triangulation with train GT) |
+| `odo/online.py` | stage 4, **final system**: car-state EKF + guided matching to the map + 6-DoF PnP + relocalisation; also test mode |
+| `odo/borders.py` | track-border edge alignment (evaluated, not used: too weak with these camera heights) |
+| `scripts/run_submission.sh` | single run script: raw mcap of a run → `submission.csv` |
 | `scripts/` | data extraction, experiment runners, parameter sweeps, summary reports |
 | `outputs/NN_*` | one folder per experiment (README, PDF report, HTML, video, predictions) |
-| `outputs/stage{1,2}_summary/` | method comparison: `summary.pdf`, `overlay.html`, `metrics.csv` |
+| `outputs/stage{1,2,3}_summary/` | method comparison: `summary.pdf`, `overlay.html`, `metrics.csv` |
 
 ## Protocol
 
 * **Splits.** train covers t = 0 to 897 s (the map / database). The tune lap (t = 632 to 752 s) is inside train and is
-  the only data used to choose parameters. val covers t = 897 to 1120 s: the last two full laps, which are also the fastest.
+  the only data used to choose parameters; stage 4 adds a second development lap dev2 (t = 752 to 897 s). For a
+  development lap the map is the training run minus that lap ±10 s. val covers t = 897 to 1120 s: the last two full laps, which are also the fastest.
   Val numbers are computed once, with parameters frozen.
+* **Scope of `evaluate.py` runs.** Every prediction file covers only its own segment: val predictions exist only for
+  the val laps (t = 897–1120 s, 2230 image sets), dev predictions only for their lap. No method was run over the
+  whole 1194 s recording (training laps are the map, so scoring them would be meaningless). `tools/evaluate.py` scores
+  every submitted stamp that has GT around it (gap ≤ 50 ms), but computes **coverage over the whole time span of the
+  GT file it is given**. With the full `gt.csv` a val-only prediction therefore shows coverage 18.7 % (223 of 1194 s)
+  while all other metrics are the same. For the official check we pass GT cut to the val window
+  (`outputs/21_online/val/gt_val.csv`, `/tf` rows with 897 s ≤ t < 1120 s):
+  `python data/c0_2026-10-13_22-53-42_camloc/tools/evaluate.py outputs/21_online/val/gt_val.csv outputs/21_online/val/pred.csv`
+  → 0.097 m, coverage 100 %. `odo/metrics.py` reproduces it and computes coverage over the split window.
 * **Anchoring.** Odometry starts from the GT pose of the first val frame. The rules allow the first pose of the run;
   for a segment that starts mid-run, this is the equivalent.
-* **Allowed inputs.** Images, intrinsics and extrinsics, track borders. From the car state: v, vx, vy, wz, ax, ay.
-  The training-run GT may serve as a map. Neither stage uses GT from the query time.
+* **Allowed inputs.** Images, intrinsics and extrinsics, track borders. From the car state: v, vx, vy, wz, ax, ay
+  (Exp21 uses vx, vy, wz, v). The training-run GT may serve as a map (slide 17), including its `pos_accuracy` field to
+  skip badly geo-referenced map frames. No method uses GT from the query time; test mode reads only `first_pose.csv`.
 * **Causality.** VO step k uses only frames k−1 and k. Retrieval and PnP use only the current image set plus the map.
   The 7 cameras are hardware-synchronised (stamps within 0.02 ms).
 
@@ -79,6 +99,29 @@ Exp12 works per query in four steps:
 A camera-to-GT clock offset of −9.1 ms was calibrated on the tune lap. All 2230 val queries were verified. Runtime is about
 410 ms per image set (not optimised).
 
+## Stages 3–4: real-time online localiser (final method)
+
+| method (val, 2 laps) | pos RMSE | median | lat RMSE | yaw RMSE | ≤ 0.5 m | ≤ 1 m | runtime |
+|---|---|---|---|---|---|---|---|
+| 12 retrieval + PnP (stage 2) | 0.160 m | 0.073 m | 0.105 m | 0.184° | 98.6 % | 100 % | ~410 ms |
+| **21 car-state EKF + cached map + guided matching + 6-DoF PnP, 7 cameras** | **0.097 m** | **0.059 m** | **0.067 m** | **0.094°** | **100 %** | **100 %** | **40.7 ms** |
+
+1. **Offline map (Exp20).** Every training frame of every camera: SuperPoint keypoints matched to the previous and next
+   frame, triangulated with the training GT. Stored per point: pixel, descriptor, 3D position (20 M points).
+2. **Predict.** EKF on (x, y, yaw), driven by car-state vx, vy, wz (only samples up to the image stamp).
+3. **Measure.** Map frames of the 3 nearest passes; their 3D points are projected with the predicted pose and matched
+   to the query's SuperPoint keypoints in a small window (no LightGlue, no retrieval while tracking). A robust
+   multi-camera PnP over (x, y, yaw) plus Δroll, Δpitch, Δz with priors, then a second, tighter matching pass.
+4. **Update** with a Mahalanobis gate; a "challenger" replaces the state when gated fixes agree with each other;
+   MegaLoc retrieval + wide-radius PnP relocalises after 1 s without a fix (recovers 10–80 m kidnaps in 1–4 s).
+
+Key findings: one narrow camera is near-degenerate (0.41 m on the tune lap), side and rear cameras fix it; estimating
+pitch/roll relative to the map frame improves lateral error by ~10 %; GT `pos_accuracy` spikes (2–3 m, same spots on
+most laps) poison the map unless such frames are avoided; the final error has no bias and sits near the GT's own
+accuracy (~0.1 m). Robust to gamma, gain, noise and blur on the query images (≤ 0.119 m on the dev laps); real
+daylight against the night map is untested and remains the main risk. Track-border edge alignment was tried and
+dropped (Exp22): with cameras 0.34–0.42 m above the asphalt, a 0.5 m lateral shift moves the borders by only ~1 px.
+
 ## Reproduce
 
 ```bash
@@ -91,6 +134,12 @@ bash scripts/stage1_val.sh
 python -m odo.vpr --model megaloc --cams fl fr r rl rr cl cr --splits train val --out outputs/10_vpr_desc
 bash scripts/stage2_retrieval_val.sh && bash scripts/exp12_val.sh
 python scripts/summary_report.py stage1 && python scripts/summary_report.py stage2
+# stages 3-4 (GPU, in tmux)
+bash scripts/exp20_map.sh                                   # map of the training run, ~10 min per camera
+python scripts/sweep_online.py final '{}'                   # dev laps (tune + dev2)
+python scripts/exp21_val.py                                 # frozen val
+python scripts/summary_report.py stage3
+bash scripts/run_submission.sh <test_run.mcap> outputs/submission   # hidden test run -> submission.csv
 ```
 
 ## Sources consulted for method choice
@@ -102,3 +151,5 @@ python scripts/summary_report.py stage1 && python scripts/summary_report.py stag
 * MegaLoc: https://arxiv.org/abs/2502.17237, code https://github.com/gmberton/MegaLoc
 * LightGlue / SuperPoint: https://github.com/cvg/LightGlue
 * Planar, non-holonomic 1-point motion model: Scaramuzza 2009 (IJCV / ICCV, "1-point RANSAC" for car-like motion)
+* Pre-trained models used (declared): SuperPoint and LightGlue (cvg/LightGlue weights), MegaLoc (gmberton/MegaLoc).
+  No external datasets.

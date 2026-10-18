@@ -13,7 +13,7 @@ sys.path.insert(0, '.')
 from odo import data, online
 
 ROOTS = {'night': None, 'day': 'data/day_proxy/{lap}', 'day_nolights': 'data/day_proxy/{lap}_nolights',
-         'day_qwen': 'data/day_proxy/{lap}_qwen'}
+         'day_qwen': 'data/day_proxy/{lap}_qwen', 'day_style': 'data/day_proxy/{lap}_style'}
 
 ap = argparse.ArgumentParser()
 ap.add_argument('name'); ap.add_argument('images', choices=list(ROOTS)); ap.add_argument('cfg', nargs='?', default='{}')
@@ -37,6 +37,7 @@ run_report.make(out, f'Exp24 {a.name}, {a.images} images, {a.fold}/{a.lap}',
                 meta={'fold / map laps': f'{a.fold} / {" ".join(data.FOLDS[a.fold]["map_laps"])} (night map)',
                       'query images': {'night': 'original night images', 'day': 'day proxy (CycleGAN-Turbo night_to_day)',
                                        'day_nolights': 'day proxy with light sources removed before translation',
-                                       'day_qwen': 'day proxy by Qwen-Image-Edit-2509 + Lightning (midday sun, all lights off)'}[a.images]})
+                                       'day_qwen': 'day proxy by Qwen-Image-Edit-2509 + Lightning (midday sun, all lights off)',
+                                       'day_style': 'day proxy by CAP-VSTNet photorealistic style transfer (lights removed)'}[a.images]})
 print('RESULT', a.images, a.name, a.fold, a.lap, json.dumps({k: round(v, 4) for k, v in m.items() if isinstance(v, float)}),
       stat, 'n_inl_median', float(inf.n_inl.median()), flush=True)

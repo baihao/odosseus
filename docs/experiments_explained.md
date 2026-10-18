@@ -91,8 +91,8 @@ that mattered (the recovery rules) fixed failure modes rather than shaving milli
   Our VO measured this directly: each camera under-estimates rotation by a different factor (`fr` 0.935, `cr` 0.876).
   This points to intrinsic (focal length / distortion) errors as well.
 * **Suspicious intrinsics.** `fr`, `cl`, `cr` and `rr` have fx/fy ≈ 1.15 (for example `cr`: fx = 744, fy = 644), while
-  `fl`, `r` and `rl` have fx ≈ fy. Pixels are almost certainly square, so either the images were resized
-  anisotropically or the K matrices belong to another resolution (see questions).
+  `fl`, `r` and `rl` have fx ≈ fy. The images were resized
+  anisotropically (confirmed with the judges, it's true)
 * **Car state.** The permitted signals (speed, vx, vy, yaw rate wz, ax, ay) are excellent. Integrating them alone
   ("dead reckoning") gives a yaw-rate noise of about 0.01° per frame. `valid_imu_b` is `False` for the entire run,
   but wz still looks like a gyro signal (see questions).
@@ -410,7 +410,8 @@ Without day data, we localised synthetic day versions of the night laps (CycleGA
 against the night map. The day versions do not hurt accuracy, but stress tests with 90 % of keypoints dropped or
 overexposure exposed a failure mode: a few weak fixes rotate the heading and the filter drifts by metres. Two rules fix
 it and are now the default: relocalisation must agree with the predicted yaw, and fixes with fewer than 60 inliers
-update position only. Details are in [`outputs/24_day/summary.md`](../outputs/24_day/summary.md).
+update position only. A third rule came from Qwen-Image-Edit day images (cl + cr): a relocalisation jump must also
+fit the dead-reckoning drift in position (0.5 m + 0.3 m/s instead of + 2 m/s), which removed a wrong 21 m jump. Details are in [`outputs/24_day/summary.md`](../outputs/24_day/summary.md).
 
 | F5/L2 (L2 not in map), pos RMSE | Exp21 | final |
 |---|---|---|
@@ -418,6 +419,7 @@ update position only. Details are in [`outputs/24_day/summary.md`](../outputs/24
 | day, lamps removed | 0.220 m | 0.189 m |
 | day, lamps removed, 10 % keypoints | 2.457 m | 0.390 m |
 | day, lamps removed, gain 1.6 | 1.243 m | 0.450 m |
+| day, Qwen-Image-Edit, cl + cr only | 5.20 m | 0.419 m |
 | F7/L2 day (all night laps in map) | – | 0.066 m |
 
 **Lower inlier minimum for a map fix (`min_inl` 30 → 15), cameras cl + cr only, F5/L2.** It accepts many more fixes

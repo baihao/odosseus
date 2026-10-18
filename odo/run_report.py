@@ -5,7 +5,7 @@ Reads <out>/pred.csv and <out>/online_info.csv (odo.online) and the GT of the ru
   page 2  over time: position, lateral and longitudinal error; innovation (distance between each fix and the
           dead-reckoning prediction, the "relative tracking"), lateral/longitudinal; fix rate (share of frames with an
           accepted map fix, gated fixes, global-retrieval attempts and accepted retrieval fixes, 2 s windows);
-          PnP inliers
+          PnP inliers; MegaLoc similarity (top-1, right/wrong place; best near the estimate)
   page 3  the same, zoomed to +-15 s around the largest position error
 and <out>/summary.md: setup (segment, map, config changes vs odo.online.DEFAULT), metrics vs the reference run, fix and
 retrieval statistics, and the worst error episodes (> 0.5 m) with what the localiser saw during each of them.
@@ -43,6 +43,11 @@ def load(out):
         r[k] = inf[k].values if k in inf else np.nan
     r['status'] = r.status.fillna('none')
     r['reloc_try'] = r.reloc_try.fillna(0)
+    # MegaLoc (global retrieval) similarity: logged at retrieval attempts, or on every frame with cfg log_sim
+    for k in ('ml_sim_top1', 'ml_sim_prior'):
+        r[k] = inf[k].values if k in inf else np.nan
+    r['ml_top1_dist'] = (np.hypot(inf.ml_top1_x.values - gx, inf.ml_top1_y.values - gy) if 'ml_top1_x' in inf
+                         else np.nan)
     return r
 
 
@@ -69,6 +74,10 @@ def summary(r):
         'innovation median / p95 [m]': (np.nanmedian(r.innov[acc]), np.nanpercentile(r.innov[acc], 95))
         if r.innov[acc].notna().any() else (np.nan, np.nan),
         'PnP inliers median': r.n_inl.median(),
+        'MegaLoc logged [% frames]': r.ml_sim_top1.notna().mean() * 100,
+        'MegaLoc top-1 sim. median / best near estimate': (r.ml_sim_top1.median(), r.ml_sim_prior.median()),
+        'MegaLoc top-1 within 15 m of GT [% logged]': np.mean(r.ml_top1_dist[r.ml_sim_top1.notna()] <= 15) * 100
+        if r.ml_sim_top1.notna().any() else np.nan,
     }
 
 
@@ -105,7 +114,22 @@ def _panels(axs, r, ref, ref_name, name):
     if ref is not None:
         ax.plot(ref.t, ref.n_inl.clip(lower=1), color=MUTED, lw=1.0)
     ax.plot(t, r.n_inl.clip(lower=1), color=SERIES[0], lw=1.0)
-    ax.set_yscale('log'); ax.set_ylabel('PnP inliers'); ax.set_xlabel('t since run start [s]')
+    ax.set_yscale('log'); ax.set_ylabel('PnP inliers')
+    # MegaLoc similarity (7-camera mean cosine): top-1 database frame (right / wrong place = within / beyond 15 m of
+    # GT) and the best database frame within 10 m of the current estimate
+    ax = axs[6]
+    if ref is not None and ref.ml_sim_top1.notna().any():
+        ax.plot(ref.t, ref.ml_sim_top1, color=MUTED, lw=1.0, label=f'top-1 ({ref_name})')
+    if r.ml_sim_top1.notna().any():
+        ok = (r.ml_top1_dist <= 15).values; lg = r.ml_sim_top1.notna().values
+        ax.plot(t[lg & ok], r.ml_sim_top1[lg & ok], '.', ms=2.5, color=SERIES[0], label='top-1, within 15 m of GT')
+        ax.plot(t[lg & ~ok], r.ml_sim_top1[lg & ~ok], 'x', ms=4, color=INK, label='top-1, wrong place (> 15 m)')
+        ax.plot(t, r.ml_sim_prior, '.', ms=1.5, color=SERIES[1], label='best within 10 m of estimate')
+        ax.legend(loc='lower left', bbox_to_anchor=(0, 1.0), frameon=False, fontsize=7, ncol=4, borderaxespad=0.1)
+    else:
+        ax.text(0.5, 0.5, 'MegaLoc not run (no retrieval attempt; log_sim off)', transform=ax.transAxes,
+                ha='center', va='center', color=INK2, fontsize=8)
+    ax.set_ylabel('MegaLoc sim.'); ax.set_xlabel('t since run start [s]')
 
 
 def episodes(r, thr=0.5, merge_s=2.0):
@@ -211,8 +235,8 @@ def make(out, name, ref=None, ref_name='reference', pdf_name='run_report.pdf', m
                  fontsize=8, color=INK2, va='top')
         pdf.savefig(fig); plt.close(fig)
         for zoom in (False, True):
-            fig, axs = plt.subplots(6, 1, figsize=(11.69, 13), sharex=True,
-                                    gridspec_kw=dict(height_ratios=[1, 1, 1, 1.2, 1.2, 0.8]))
+            fig, axs = plt.subplots(7, 1, figsize=(11.69, 14.5), sharex=True,
+                                    gridspec_kw=dict(height_ratios=[1, 1, 1, 1.2, 1.2, 0.8, 1]))
             tm = r.t[r.pos.idxmax()]
             cut = (lambda d: d[(d.t > tm - 15) & (d.t < tm + 15)]) if zoom else (lambda d: d)
             _panels(axs, cut(r), cut(rr) if rr is not None else None, ref_name, 'this run')

@@ -19,3 +19,7 @@ Run in a loop:
 
 Document your progress in docs/ folder. Create one summary log, with the major changes,
 in the format "[day-hour-minute] one line of description". For more detailed description, create readmes in outputs/ folder. Save experiment outputs in outputs/ folder, each experiment in its own folder. Save PDFs with metric values, save visualizations.
+
+## Data location
+New daytime frames located in:
+data/rosbag_2026-10-13_16-08-46_cameras_lap

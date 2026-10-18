@@ -466,7 +466,9 @@ class Reloc:
         print('reloc db', len(self.t), 'frames', flush=True)
 
     @torch.no_grad()
-    def candidates(self, paths, n_cand=4, min_sep=8.0):
+    def candidates(self, paths, n_cand=4, min_sep=8.0, prior=None, near_m=10.0):
+        """Spatially distinct top candidates (poses). Also sets self.last (report): MegaLoc similarity of the top-1
+        database frame and its position, and the best similarity among database frames within near_m of `prior`."""
         from .vpr import MEAN, STD, load_img
         q = []
         for c, p in zip(self.cams, paths):
@@ -484,6 +486,11 @@ class Reloc:
             S = S + sum(self.D[i].float() @ d[k] for k, i in enumerate(grp))
         S = S / len(ok)
         top = torch.topk(S, 50).indices.cpu().numpy()
+        self.last = dict(ml_sim_top1=float(S[top[0]]), ml_top1_x=float(self.pose[top[0], 0]),
+                         ml_top1_y=float(self.pose[top[0], 1]))
+        if prior is not None:
+            near = np.hypot(self.pose[:, 0] - prior[0], self.pose[:, 1] - prior[1]) < near_m
+            self.last['ml_sim_prior'] = float(S[torch.from_numpy(near).to(S.device)].max()) if near.any() else np.nan
         cands = []
         for j in top:
             if all(np.hypot(*(self.pose[j, :2] - self.pose[c, :2])) > min_sep for c in cands):
@@ -579,9 +586,10 @@ DEFAULT = dict(n_pass=3, sel_radius=15.0, r1=24.0, r2=4.0, sim1=0.75, sim2=0.6, 
                q_lon=0.01, q_lat=0.005, q_yaw=0.0005, q0=0.005, r_scale=4.0, r0_pos=0.10, r0_yaw=0.004,
                gate=16.0, chal_n=8, chal_m=0.3, chal_yaw=0.005, max_kp=2048, r1_grow=40.0, max_gt_acc=1.0,
                extra_dof=3, prior_rp_deg=0.5, prior_z=0.05, reloc=True, reloc_after=1.0, reloc_every=0.5,
-               reloc_r1=60.0, reloc_min_inl=80, reloc_sig0=0.5, reloc_sig_rate=2.0, reloc_strong_inl=300,
+               reloc_r1=60.0, reloc_min_inl=80, reloc_sig0=0.5, reloc_sig_rate=0.3, reloc_strong_inl=300,
                r_inl_ref=0, chal_fixed=True, r_dist_ref=0, sim1_lo=0.0, lo_below=300, mask_bright=0, kp_keep=1.0,
-               reloc_yaw0_deg=0.3, reloc_yaw_rate_deg=0.1, yaw_min_inl=60)   # Exp24 (day transfer); Exp21: 1.0, 2.0, 0
+               reloc_yaw0_deg=0.3, reloc_yaw_rate_deg=0.1, yaw_min_inl=60,   # Exp24 (day transfer); Exp21: 1.0, 2.0, 0 and reloc_sig_rate 2.0
+               log_sim=False)   # report only: MegaLoc similarity on every frame (outside the timed loop, no effect on poses)
 
 
 def image_sets(split, cams, qrun=None):
@@ -693,7 +701,9 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             # lost: verify retrieval candidates (and the current estimate) with a wide search radius
             last_reloc = stamp
             best = None
-            for prior in [X] + reloc.candidates(list(sets.iloc[k][cams])):
+            cands = reloc.candidates(list(sets.iloc[k][cams]), prior=X)
+            ml_info = dict(reloc.last)
+            for prior in [X] + cands:
                 pr, cr, ir = measure(fmap, cm, feats, np.asarray(prior, dtype=np.float64), cfg, cfg['reloc_r1'])
                 if pr is not None and (best is None or ir['n_inl'] > best[2]['n_inl']):
                     best = (pr, cr, ir)
@@ -702,6 +712,7 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
                 relocated = True
             info['reloc_try'] = 1                     # global retrieval attempted at this frame (report: rates)
             info['reloc_best_inl'] = best[2]['n_inl'] if best is not None else 0
+            info.update(ml_info)
         # 5. update
         if p_meas is not None:
             Rm = cov_meas * cfg['r_scale'] + np.diag([cfg['r0_pos'] ** 2, cfg['r0_pos'] ** 2, cfg['r0_yaw'] ** 2])
@@ -723,7 +734,8 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             info.update(innov=float(np.hypot(nu[0], nu[1])), innov_lon=float(cy * nu[0] + sy * nu[1]),
                         innov_lat=float(-sy * nu[0] + cy * nu[1]), innov_yaw_deg=float(np.degrees(nu[2])))
             # a relocalisation jump must be plausible for the time without a fix (dead reckoning drifts slowly),
-            # unless the evidence is very strong
+            # unless the evidence is very strong. Dead reckoning drifts ~0.06 m/s (~10 m per lap); 0.3 m/s keeps a 5x margin
+            # (Exp24: with 2 m/s a day-image run accepted a wrong 21 m jump after 5.7 s without a fix)
             sig = cfg['reloc_sig0'] + cfg['reloc_sig_rate'] * since
             # yaw: car-state dead reckoning drifts ~0.09 deg in 1 s, ~0.4 deg in 10 s (stage 1), so a large yaw jump is
             # implausible however long the filter went without a fix (Exp24: a 2.5 deg wrong jump caused 7 m drift)
@@ -760,6 +772,9 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
         h = -dt_ns / 1e9
         xo, yo, yo_aw = X[0] + v * h * np.cos(X[2]), X[1] + v * h * np.sin(X[2]), wrap(X[2] + wz * h)
         torch.cuda.synchronize(); times.append((time.perf_counter() - tic) * 1000)
+        if cfg['log_sim'] and reloc is not None and 'ml_sim_top1' not in info:
+            reloc.candidates(list(sets.iloc[k][cams]), prior=X)       # report only, after the timer
+            info.update(reloc.last)
         rows.append((stamp, xo, yo, yo_aw))
         info.update(ms=times[-1], sx=np.sqrt(P[0, 0]), sy=np.sqrt(P[1, 1]))
         infos.append(info)

@@ -405,4 +405,44 @@
     {\pxfont{19}{1.45}\color{bodytext}\renewcommand\textbf[1]{{\interbold\color{ink}##1}}#5\par}%
   \end{minipage}\par}
 
+% ---------------------------------------------------------------------
+%  One video for the whole slide (visualization slide): a clickable 16:9 still, centred under the title
+%    \fullvideo{poster}{link}{LABEL}
+% ---------------------------------------------------------------------
+\newcommand\fullvideo[3]{%
+  \par\vspace{30\px}\noindent\hspace*{184\px}%           (1408 - 1040) / 2
+  \href{#2}{\begin{tikzpicture}
+    \begin{scope}
+      \clip[rounded corners=14\px] (0,0) rectangle (1040\px,-585\px);
+      \node[anchor=north west, inner sep=0] at (0,0) {\includegraphics[width=1040\px, height=585\px]{#1}};
+      \fill[ink, fill opacity=0.18] (0,0) rectangle (1040\px,-585\px);
+    \end{scope}
+    \fill[white, fill opacity=0.94] (520\px,-292.5\px) circle (64\px);
+    \fill[signal, sharp corners] (502\px,-257.5\px) -- (502\px,-327.5\px) -- (562\px,-292.5\px) -- cycle;
+    \node[anchor=north west, fill=ink!88, text=white, rounded corners=5\px, inner xsep=12\px, inner ysep=8\px]
+      at (16\px,-16\px) {\interbold\pxfont{13}{1}\tracking{12}#3};
+  \end{tikzpicture}}\par}
+
+% ---------------------------------------------------------------------
+%  Summary slide with a figure on the right:
+%    \summaryfigslide{06}{Thank you}{image}{\sumstack{Predict,}{description} \sumstack{...}{...} ...}
+%  Each word with its description underneath (left column), the image in a white card (right column).
+% ---------------------------------------------------------------------
+\newcommand\sumstack[2]{%
+  \stepcounter{odsum}%
+  \ifcase\value{odsum}\or\def\bc{signal}\or\def\bc{amber}\else\def\bc{sea}\fi
+  \noindent{\color{\bc}\rule[-0.05em]{8\px}{64\px}}\hspace{22\px}%
+  {\headfont\pxfont{84}{1.0}\addfontfeature{LetterSpace=-2}\color{white}#1}\par\vspace{6\px}%
+  \noindent\hspace*{32\px}\begin{minipage}[t]{640\px}\raggedright{\intermedium\pxfont{22}{1.35}\color{hltext}#2}\end{minipage}\par\vspace{26\px}}
+\newcommand\summaryfigslide[4]{%
+  {\odnavytrue\renewcommand\odkickertext{hltext}\setcounter{odsum}{0}%
+   \begin{frame}[t]
+     \vspace*{\dimexpr64\px-\baselineskip\relax}
+     \kicker{#1}{#2}\vspace{36\px}
+     \noindent\begin{minipage}[c]{680\px}#4\end{minipage}\hspace*{28\px}%
+     \begin{minipage}[c]{640\px}%
+       \tikz\node[fill=white, rounded corners=14\px, inner sep=14\px]{\includegraphics[width=610\px]{#3}};%
+     \end{minipage}
+   \end{frame}}}
+
 \endinput

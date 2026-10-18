@@ -5,8 +5,8 @@ code as the filter) over a horizon h and compare with GT at t + h, in the car fr
 
 Pass 1 (raw car state): systematic errors -> speed scale (median along-track error per metre over 1 s) and yaw-rate
 bias (least-squares slope of the mean yaw error over 1-10 s).
-Pass 2 (car state corrected by pass 1): the remaining drift sigma vs distance (lon, lat) and time (yaw). The filter's
-process noise is built from this table (odo.online.dr_q).
+Pass 2 (car state corrected by pass 1): the remaining drift sigma vs distance (lon, lat) and time (yaw). Evidence for
+the relocalisation plausibility bounds (docs/final_method.md); the filter's process noise is odo.online.DEFAULT.
 
     python scripts/dr_calibration.py -> outputs/24_day/dr_calibration.md and outputs/24_day/dr_calibration.json"""
 import json

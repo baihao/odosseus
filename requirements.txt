@@ -1,0 +1,23 @@
+# Inference (./run.sh with the provided checkpoints). Python 3.11, one CUDA GPU (developed on an H100 NVL, CUDA 12.4).
+# Versions = the tested environment (full freeze: docs/environment_freeze.txt).
+#   conda create -n odosseus python=3.11 && conda activate odosseus
+#   pip install -r requirements.txt
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1+cu124
+torchvision==0.20.1+cu124            # nvJPEG decoding of the query images
+lightglue @ git+https://github.com/cvg/LightGlue.git@eb42fee2d71449efb0aa5c10549752b5d75384d8   # SuperPoint network (query keypoints); pulls in kornia
+# MegaLoc (torch.hub gmberton/MegaLoc) loads its weights from Hugging Face (gberton/MegaLoc)
+huggingface_hub==2.2.0
+safetensors==0.8.0
+numpy==1.26.4
+scipy==1.17.1
+pandas==3.0.6
+opencv-python==5.0.0.93
+threadpoolctl==3.7.0
+matplotlib==3.11.2
+# test bag extraction (scripts/extract_mcap.py)
+mcap==1.5.0
+mcap-ros2-support==0.5.7
+zstandard==0.25.0
+lz4==4.4.5
+# Research only (rebuilding the checkpoints, reports of the experiments in docs/): plotly==7.1.0, kornia==0.8.3

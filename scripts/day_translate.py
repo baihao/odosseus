@@ -1,5 +1,5 @@
 """Day proxy of the night query images: CycleGAN-Turbo `night_to_day` (img2img-turbo, trained on BDD100k driving
-scenes) applied to every camera image of a lap. Env `daytrans` (GPU, run in tmux).
+scenes) applied to every camera image of a lap. Separate env `daytrans` (GPU, img2img-turbo).
 
 The model runs at the resolution SuperPoint sees online (long side 1024, padded to a multiple of 64), the output is
 resized back to the original 1506x728 and written as JPEG under <out>/images/<cam>/ with the original file names,

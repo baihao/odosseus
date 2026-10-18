@@ -1,5 +1,7 @@
 """Build a fake 'test run' folder from a time window of the training run (default: val laps, t >= 897 s) in the layout of scripts/extract_mcap.py, without
-GT except first_pose.csv. Checks the test-mode plumbing (odo.online --split test --query ...)."""
+GT except first_pose.csv. Checks the test-mode plumbing (the folder is already extracted, so odo.online directly):
+    python scripts/make_fake_test.py data/fake_test
+    python -m odo.online --split test --query data/fake_test --out outputs/fake_test --first_pose data/fake_test/first_pose.csv"""
 import sys, os, json, shutil; sys.path.insert(0, '.')
 import pandas as pd
 from odo import data

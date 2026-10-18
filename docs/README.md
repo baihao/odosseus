@@ -3,7 +3,7 @@
 **Final method (Exp21), 3-fold lap cross-validation (F1–F3, 6 laps each validated once): 0.156 m position RMSE,
 median 0.066 m, 0.131 m lateral, 0.132° yaw, 99.5 % within 1 m; ~41 ms per 7-camera image set** (H100 NVL). Without
 the one off-line warm-up lap (L2) the laps are 0.07–0.12 m. Details: [`laps.md`](laps.md),
-`outputs/21_online/cv/README.md`, per fold and lap: [`cv_performance.md`](cv_performance.md). Submission for a new run: `bash scripts/run_submission.sh <run.mcap>`.
+`outputs/21_online/cv/README.md`, per fold and lap: [`cv_performance.md`](cv_performance.md). Submission for a new run: `./run.sh <run.mcap> --first_pose` (root [`README.md`](../README.md)).
 
 **Daylight transfer (Exp24, [`final_method.md`](final_method.md), `outputs/24_day/summary.md`).** On night→day
 translated query images matched against the night map: F5/L2 (hardest lap) 0.19–0.20 m vs 0.30 m at night, untouched
@@ -19,24 +19,24 @@ dataset provider: [`experiments_explained.md`](experiments_explained.md). Each e
 
 | path | content |
 |---|---|
-| `odo/` | the code (Python package, env `mast3r-slam`) |
-| `odo/data.py` | access to GT, car state (allowed fields only), calibration, frames; splits |
+| `run.sh` | single run script: raw mcap of a run + its first pose → `submission.csv` |
+| `odo/` | the code (Python package, `requirements.txt`) |
+| `odo/data.py` | access to GT, car state (allowed fields only), calibration, frames; splits; `train_ref.npz` fallback at inference |
 | `odo/metrics.py` | official metric (bit-exact with `tools/evaluate.py`), plus RPE and aligned ATE |
 | `odo/report.py` | per-experiment report: `metrics_<split>.json`, `report_<split>.pdf`, interactive `traj_<split>.html`, `debug_<split>.mp4` |
-| `odo/feature_vo.py`, `odo/planar_vo.py`, `odo/fuse_vo.py` | stage 1: the visual odometry we chose |
-| `odo/vo2map.py`, `odo/eval_vo.py` | evaluation of third-party VO (VGGT-Long, Pi-Long, MASt3R-SLAM) |
-| `odo/vo_gyro.py` | VO combined with the gyro (VO used as a motion model) |
-| `odo/vpr.py`, `odo/retrieval.py`, `odo/reloc_pnp.py` | stage 2: retrieval, then metric relocalisation |
-| `odo/map_build.py` | stage 3: cached 3D feature map of the training run (SuperPoint + triangulation with train GT) |
+| `odo/feature_vo.py` | SuperPoint + LightGlue extractor/matcher used by the map build (stage 1 VO code otherwise) |
+| `odo/vpr.py`, `odo/retrieval.py`, `odo/reloc_pnp.py` | MegaLoc descriptors and retrieval, triangulation / PnP helpers |
+| `odo/map_build.py` | cached 3D feature map of the training run (SuperPoint + triangulation with train GT) |
+| `odo/online.py` | **final system**: car-state EKF + guided matching to the map + 6-DoF PnP + relocalisation; also test mode |
+| `odo/first_pose.py` | stand-in first pose (`--no_first_pose`): car-state motion matched by curvature to a map lap |
 | `odo/run_report.py` | per-run PDF: error, fix − dead-reckoning innovation, fix and retrieval rates |
 | `scripts/day_translate.py` | Exp24 day proxy of the query images (CycleGAN-Turbo night_to_day, env `daytrans`) |
-| `odo/online.py` | stage 4, **final system**: car-state EKF + guided matching to the map + 6-DoF PnP + relocalisation; also test mode |
-| `odo/borders.py` | track-border edge alignment (evaluated, not used: too weak with these camera heights) |
-| `scripts/run_submission.sh` | single run script: raw mcap of a run → `submission.csv` |
-| `scripts/` | data extraction, experiment runners, parameter sweeps, summary reports |
-| `outputs/NN_*` | one folder per experiment (README, PDF report, HTML, video, predictions) |
-| `outputs/stage{1,2,3}_summary/` | method comparison: `summary.pdf`, `overlay.html`, `metrics.csv` |
-| `outputs/20_map/`, `outputs/10_vpr_desc/` | precomputed map (10.6 GB) and MegaLoc descriptors (1.4 GB), git-ignored; see [`precomputed_data.md`](precomputed_data.md) |
+| `scripts/` | data extraction, train_ref build, experiment runners of the reported numbers, plots |
+| `outputs/NN_*` | one folder per experiment (README, PDF report, HTML, video, predictions), git-ignored |
+| `outputs/20_map/`, `outputs/10_vpr_desc/` | checkpoints: map (10.6 GB), `train_ref.npz`, MegaLoc descriptors (1.4 GB), git-ignored; see [`precomputed_data.md`](precomputed_data.md) |
+
+Stage 1–2 code (VO, third-party VO evaluation, retrieval-only relocalisation, summary reports) and Exp22 (track
+borders) are not part of this branch; they are in commit `d93e142` of `main`.
 
 ## Protocol
 
@@ -167,23 +167,19 @@ dropped (Exp22): with cameras 0.34–0.42 m above the asphalt, a 0.5 m lateral s
 ## Reproduce
 
 ```bash
-source /scratch/local/velikanov/miniconda/bin/activate mast3r-slam    # GPU jobs inside tmux (see CLAUDE.md)
+pip install -r requirements.txt                              # Python 3.11, one CUDA GPU
 python scripts/extract_mcap.py data/<run>/<run>_0.mcap data/extracted
-python scripts/exp01_deadreckoning.py
-python -m odo.feature_vo --split tune --out outputs/05_planar_vo/steps_tune   # and --split val
-python -m odo.planar_vo --matches outputs/05_planar_vo/steps_val --out outputs/05_planar_vo/theta_val
-bash scripts/stage1_val.sh
-python -m odo.vpr --model megaloc --cams fl fr r rl rr cl cr --splits train val --out outputs/10_vpr_desc
-bash scripts/stage2_retrieval_val.sh && bash scripts/exp12_val.sh
-python scripts/summary_report.py stage1 && python scripts/summary_report.py stage2
-# stages 3-4 (GPU, in tmux)
-bash scripts/exp20_map.sh                                   # map of the training run, ~10 min per camera
-python scripts/sweep_online.py final '{}'                   # dev laps (tune + dev2)
-python scripts/exp21_val.py                                 # legacy val
-python -m odo.vpr --model megaloc --cams fl fr cl cr r rl rr --splits L8 --out outputs/10_vpr_desc
-for f in F1 F2 F3 F4; do python scripts/exp21_cv.py $f --video; done; python scripts/cv_summary.py   # lap CV
-python scripts/summary_report.py stage3
-bash scripts/run_submission.sh <test_run.mcap> outputs/submission   # hidden test run -> submission.csv
+# checkpoints: download (scripts/download_checkpoints.sh) or rebuild
+for c in fl fr cl cr r rl rr; do python -m odo.map_build --cams $c --out outputs/20_map; done   # ~10 min per camera
+python -m odo.vpr --model megaloc --cams fl fr cl cr r rl rr --splits train val L8 --out outputs/10_vpr_desc
+python scripts/build_train_ref.py                            # outputs/20_map/train_ref.npz
+# Exp21: lap cross-validation and the legacy val split
+for f in F1 F2 F3 F4; do python scripts/exp21_cv.py $f --video; done; python scripts/cv_summary.py
+python scripts/exp21_val.py
+# Exp24: day transfer (proxy: scripts/day_translate.py), robustness, kidnap, real daytime lap L9
+bash scripts/exp24_F7.sh; bash scripts/exp24_L7.sh; bash scripts/exp24_stress.sh; bash scripts/exp24_kidnap_final.sh
+bash scripts/exp24_L9.sh <daytime.mcap>; bash scripts/exp24_L9_F5.sh
+./run.sh <test_run.mcap> outputs/submission --first_pose     # hidden test run -> submission.csv
 ```
 
 ## Sources consulted for method choice

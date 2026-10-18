@@ -14,7 +14,7 @@ Both folders are under `outputs/`, which is git-ignored: they are not in the rep
 below) or shipped separately with the submission.
 
 ## 1. 3D feature map — `outputs/20_map/<cam>.npz`
-Built by `odo/map_build.py` (`scripts/exp20_map.sh`). For each training frame of a camera: the SuperPoint keypoints
+Built by `odo/map_build.py` (`./run.sh` when missing). For each training frame of a camera: the SuperPoint keypoints
 that could be triangulated (LightGlue matches to the previous and next frame, training GT poses), stored as
 concatenated arrays plus a per-frame index.
 
@@ -46,7 +46,7 @@ whose training GT is not flagged, and moves `X` and `desc` to the GPU (524 B per
 map). Loading takes ~10 s; the per-camera file is read into CPU memory one at a time (peak ~2–3 GB, within the 20 GB
 RAM budget).
 
-Rebuild: `bash scripts/exp20_map.sh` (one GPU, ~10 min per camera when run alone, ~70 min for all 7).
+Rebuild: `for c in fl fr cl cr r rl rr; do python -m odo.map_build --cams $c --out outputs/20_map; done` (one GPU, ~10 min per camera when run alone, ~70 min for all 7).
 
 ## 2. MegaLoc descriptors — `outputs/10_vpr_desc/megaloc_<cam>_<split>.npz`
 Built by `odo/vpr.py --model megaloc` (MegaLoc = DINOv2-B + SALAD, torch.hub `gmberton/MegaLoc`). One 8448-D

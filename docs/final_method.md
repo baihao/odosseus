@@ -1,6 +1,6 @@
 # Final method: camera localisation against a night map (Exp24)
 
-What runs on the test run (`bash scripts/run_submission.sh <test.mcap>`), what Exp24 changed, and the experiments
+What runs on the test run (`./run.sh <test.mcap> --first_pose`), what Exp24 changed, and the experiments
 behind it. Code: `odo/online.py` (`DEFAULT` = the final parameters), `odo/map_build.py`. Full history:
 [`README.md`](README.md), [`experiments_explained.md`](experiments_explained.md). Exp24 run table and reports:
 [`outputs/24_day/summary.md`](../outputs/24_day/summary.md).
@@ -44,9 +44,8 @@ relocalisation jump is large, so well-matched laps are unchanged.
 
 The yaw bound keeps ~3–4× over the measured dead-reckoning yaw drift (σ 0.07° in 1 s, 0.29° in 10 s). The position
 bound is about the measured p95 drift itself: dead reckoning drifts ~0.3 m/s at p95 over 1–10 s
-([`parameters.md`](parameters.md) 2.1; an earlier estimate of 0.06 m/s averaged over whole laps, where errors partly
-cancel). Larger jumps still pass with ≥ 300 inliers or 8 consistent fixes. Which parameters are tuned and how most of
-them can be measured, derived or estimated online: [`parameters.md`](parameters.md). Kidnaps of 3–80 m
+(`scripts/dr_calibration.py`, car state integrated from training-GT poses; an earlier estimate of 0.06 m/s averaged
+over whole laps, where errors partly cancel). Larger jumps still pass with ≥ 300 inliers or 8 consistent fixes. Kidnaps of 3–80 m
 and up to 20° still recover in 1.0–3.4 s. Nothing else (map, matching, PnP, noise levels) changed.
 
 ## 3. Exp24 experiments

@@ -54,9 +54,25 @@ SPLITS = {
 }
 
 
+# Inference without the training bag: the training-run columns that test mode reads (map-run GT poses for the
+# relocalisation database and the stand-in first pose, the state estimator's pos_accuracy for the map filter),
+# shipped with the checkpoints. Written by scripts/build_train_ref.py.
+TRAIN_REF = os.path.join(ROOT, 'outputs', '20_map', 'train_ref.npz')
+
+
+def _train_ref(name):
+    if not os.path.exists(TRAIN_REF):
+        raise FileNotFoundError(f'training data not found: neither {DATA} (scripts/extract_mcap.py on the training '
+                                f'bag) nor {TRAIN_REF} (checkpoints, scripts/download_checkpoints.sh)')
+    z = np.load(TRAIN_REF)
+    cols = [str(c) for c in z[f'{name}_cols']]
+    d = pd.DataFrame({c: z[f'{name}_{i}'] for i, c in enumerate(cols)})
+    return d
+
+
 @lru_cache(None)
 def gt():
-    d = pd.read_csv(f'{DATA}/gt.csv')
+    d = pd.read_csv(f'{DATA}/gt.csv') if os.path.exists(f'{DATA}/gt.csv') else _train_ref('gt')
     d = d.sort_values('timestamp_ns').drop_duplicates('timestamp_ns').reset_index(drop=True)
     return d
 
@@ -67,7 +83,9 @@ def t0_ns():
 
 @lru_cache(None)
 def state():
-    """Car state. Only speed / accelerations / yaw rate are allowed as method inputs."""
+    """Car state. Only speed / accelerations / yaw rate are allowed as method inputs (pos_accuracy: map filter only)."""
+    if not os.path.exists(f'{DATA}/state.csv'):
+        return _train_ref('state')        # timestamp_ns, pos_accuracy; stored in the sorted order of the csv path
     d = pd.read_csv(f'{DATA}/state.csv')
     d['timestamp_ns'] = d['header.stamp.sec'].astype(np.int64) * 10**9 + d['header.stamp.nanosec'].astype(np.int64)
     return d.sort_values('timestamp_ns').reset_index(drop=True)
@@ -159,8 +177,23 @@ class Run:
             v['K'] = np.array(v['K']).reshape(3, 3); v['D'] = np.array(v['D']); v['T_base_cam'] = np.array(v['T_base_cam'])
         return c
 
-    def first_pose(self):
-        """(stamp_ns, x, y, yaw) of the first pose of the run: first_pose.csv if given, else the first GT row."""
-        p = f'{self.root}/first_pose.csv'
-        r = pd.read_csv(p if os.path.exists(p) else f'{self.root}/gt.csv', nrows=1).iloc[0]
-        return int(r.timestamp_ns), float(r.x), float(r.y), float(r.yaw)
+    def first_pose(self, path=None):
+        """(stamp_ns or None, x, y, yaw) of the given first pose of the run (rules: allowed as the initial pose).
+        path (odo.online --first_pose FILE), else <root>/first_pose.csv, else the first row of <root>/gt.csv (the
+        first /tf of the bag). Only the first row is read. No timestamp_ns column: the pose at the first image."""
+        cands = [path] if path else [f'{self.root}/first_pose.csv', f'{self.root}/gt.csv']
+        p = next((c for c in cands if os.path.exists(c)), None)
+        if p is None:
+            raise FileNotFoundError(f'no first pose: {" / ".join(cands)} not found; give --first_pose FILE '
+                                    f'(csv: timestamp_ns,x,y,yaw) or --no_first_pose')
+        d = pd.read_csv(p, nrows=1)
+        if not len(d):
+            raise ValueError(f'no first pose: {p} has no rows (no /tf in the bag?); give --first_pose FILE')
+        r = d.iloc[0]
+        if 'yaw' in r:
+            yaw = float(r.yaw)
+        elif all(k in r for k in ('qx', 'qy', 'qz', 'qw')):        # heading from the quaternion (map -> base_link)
+            yaw = float(np.arctan2(2 * (r.qw * r.qz + r.qx * r.qy), 1 - 2 * (r.qy ** 2 + r.qz ** 2)))
+        else:
+            raise ValueError(f'first pose {p}: needs columns x, y and yaw (or qx, qy, qz, qw)')
+        return (int(r.timestamp_ns) if 'timestamp_ns' in r else None), float(r.x), float(r.y), yaw

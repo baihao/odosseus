@@ -650,17 +650,15 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
 
     # init: first pose of the run / segment (allowed), expressed at GT-clock time t + dt
     st0 = int(sets.stamp_ns[0])
-    if qrun is not None:
-        tp, x0, y0, yaw0 = qrun.first_pose()          # propagated to the first image by dead reckoning
-        if st0 + dt_ns > tp:
-            dx, dy, dth = cs.integrate(tp, st0 + dt_ns, st0)
-            x0, y0, yaw0 = move(np.array([x0, y0, yaw0]), dx, dy, dth)
-    else:
-        x0, y0, yaw0 = data.first_pose(st0 + dt_ns)
-    if cfg.get('init_pose'):                  # (stamp_ns, x, y, yaw): a given start pose, e.g. a stand-in for L9
+    if cfg.get('init_pose'):                  # (stamp_ns or None, x, y, yaw): --first_pose FILE / --no_first_pose
         tp, x0, y0, yaw0 = cfg['init_pose']
-        if st0 + dt_ns > tp:
-            x0, y0, yaw0 = move(np.array([x0, y0, yaw0]), *cs.integrate(int(tp), st0 + dt_ns, st0))
+    elif qrun is not None:
+        tp, x0, y0, yaw0 = qrun.first_pose()
+    else:
+        tp, (x0, y0, yaw0) = st0 + dt_ns, data.first_pose(st0 + dt_ns)
+    tp = st0 + dt_ns if tp is None else int(tp)   # no stamp: the pose at the first image
+    if st0 + dt_ns > tp:                      # propagated to the first image by dead reckoning
+        x0, y0, yaw0 = move(np.array([x0, y0, yaw0]), *cs.integrate(tp, st0 + dt_ns, st0))
     s0, s0yaw = cfg.get('init_sigma_xy', 0.05), np.radians(cfg.get('init_sigma_yaw_deg', np.degrees(0.002)))
     X = np.array([x0, y0, yaw0]); P = np.diag([s0 ** 2, s0 ** 2, s0yaw ** 2])
     kid = cfg.get('kidnap')                   # robustness test: (t since start [s], lon [m], lat [m], yaw [deg])
@@ -813,8 +811,31 @@ if __name__ == '__main__':
     ap.add_argument('--query', help='extracted run to localise (split test): images/, state.csv, calib.json, first pose')
     ap.add_argument('--map_until', type=float, help='test mode: use only map frames before this time [s] (plumbing checks)')
     ap.add_argument('--fold', choices=list(data.FOLDS), help='cross-validation fold: --split is a lap (L0..L8)')
+    fp = ap.add_mutually_exclusive_group()
+    fp.add_argument('--first_pose', metavar='FILE', help='test mode: the given first pose of the run (csv, first row: '
+                    'timestamp_ns,x,y,yaw; yaw in rad; without timestamp_ns = the pose at the first image)')
+    fp.add_argument('--no_first_pose', action='store_true', help='test mode: no first pose given; estimate a stand-in '
+                    'from the car-state motion matched to the map run (odo.first_pose, a few m off; start sigma 3 m / 1 deg)')
     a = ap.parse_args()
-    pred, inf, ms, stat = run(a.split, a.out, a.map, a.cams, a.limit, json.loads(a.cfg), query_root=a.query,
+    cfg = json.loads(a.cfg)
+    if a.query:
+        if a.first_pose:
+            cfg['init_pose'] = list(data.Run(a.query).first_pose(a.first_pose))
+        elif a.no_first_pose:
+            from .first_pose import stand_in
+            pose, sinfo = stand_in(a.query)
+            cfg['init_pose'] = list(pose)
+            cfg.setdefault('init_sigma_xy', 3.0); cfg.setdefault('init_sigma_yaw_deg', 1.0)
+            os.makedirs(a.out, exist_ok=True)
+            json.dump(sinfo, open(f'{a.out}/first_pose_standin.json', 'w'))
+            print(f'stand-in first pose ({pose[1]:.2f}, {pose[2]:.2f}, {np.degrees(pose[3]):.2f} deg): {sinfo["method"]}')
+        else:
+            ap.exit(2, 'odo.online: test mode (--query) needs a start-pose flag:\n'
+                       '  --first_pose FILE   the given first pose of the run (csv: timestamp_ns,x,y,yaw; first row)\n'
+                       '  --no_first_pose     no first pose given: stand-in from the car-state motion (a few m off)\n')
+    elif a.first_pose or a.no_first_pose:
+        ap.error('--first_pose / --no_first_pose are for test mode (--query); research splits start at their GT pose')
+    pred, inf, ms, stat = run(a.split, a.out, a.map, a.cams, a.limit, cfg, query_root=a.query,
                               map_until_s=a.map_until, fold=a.fold)
     if a.query:
         print(f'{len(pred)} poses written to {a.out}/pred.csv, {ms:.1f} ms/frame', stat)

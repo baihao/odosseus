@@ -28,7 +28,7 @@ FOLDS = {
     'F5': dict(map='map_cv_f2_swap', map_laps=['L0', 'L1', 'L3', 'L4', 'L6', 'L8'], val=['L5', 'L7'], tune='L2'),
     'F6': dict(map='map_cv_f1_swap', map_laps=['L0', 'L5', 'L3', 'L4', 'L7', 'L8'], val=['L1', 'L6'], tune='L2'),
     # F7: the test-run setting for daylight. Map = all night laps (as for the hidden test run); validation = the day
-    # proxy of L2 (scripts/day_translate.py), whose night frames are in the map: only the appearance changes.
+    # proxy of L2 (night images translated to day), whose night frames are in the map: only the appearance changes.
     'F7': dict(map='map_all', map_laps=[f'L{i}' for i in range(9)], val=['L2'], tune='L5', day_query=True),
 }
 

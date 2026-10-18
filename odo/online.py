@@ -641,7 +641,7 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
     sets = image_sets(split, cams, qrun)
     if limit:
         sets = sets.iloc[:limit]
-    if cfg.get('img_root'):                   # same frames, other pixels (e.g. the day proxy, scripts/day_translate.py)
+    if cfg.get('img_root'):                   # same frames, other pixels (e.g. night images translated to day)
         for c in cams:
             sets[c] = [p.replace(data.DATA, cfg['img_root']) if isinstance(p, str) else None for p in sets[c]]
     dt_ns = int(np.load(f'{map_dir}/{cams[0]}.npz')['dt_ns'])

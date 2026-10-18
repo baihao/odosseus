@@ -42,8 +42,11 @@ relocalisation jump is large, so well-matched laps are unchanged.
 | relocalisation position plausibility | 0.5 m + 2 m/s | **0.5 m + 0.3 m/s** (`reloc_sig_rate`) | on Qwen day images, a relocalisation with 80 inliers (all from one camera) jumped 21 m along the track after 5.7 s without a fix; the filter stayed 20 m off to the end of the lap |
 | yaw from weak fixes | always used | **ignored below 60 inliers** (`yaw_min_inl`) | a 30-inlier fix turned yaw by 1.6°; the filter then rejected the correct fixes: 11 m error for 25 s |
 
-The bounds keep a margin over real dead-reckoning drift: ~3× for yaw (~0.09° in 1 s, ~0.4° in 10 s) and ~5× for
-position (~0.06 m/s, ~10 m per lap). Larger jumps still pass with ≥ 300 inliers or 8 consistent fixes. Kidnaps of 3–80 m
+The yaw bound keeps ~3–4× over the measured dead-reckoning yaw drift (σ 0.07° in 1 s, 0.29° in 10 s). The position
+bound is about the measured p95 drift itself: dead reckoning drifts ~0.3 m/s at p95 over 1–10 s
+([`parameters.md`](parameters.md) 2.1; an earlier estimate of 0.06 m/s averaged over whole laps, where errors partly
+cancel). Larger jumps still pass with ≥ 300 inliers or 8 consistent fixes. Which parameters are tuned and how most of
+them can be measured, derived or estimated online: [`parameters.md`](parameters.md). Kidnaps of 3–80 m
 and up to 20° still recover in 1.0–3.4 s. Nothing else (map, matching, PnP, noise levels) changed.
 
 ## 3. Exp24 experiments

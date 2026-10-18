@@ -562,6 +562,7 @@ def measure(fmap, cm, feats, X, cfg, r1, frames=None):
             info['lo'] = True
         if stage == 0:
             info['n_m1'] = len(mi_np)
+            info['m1_cam'] = '/'.join(str(int(c)) for c in np.bincount(ci_np[mi_np], minlength=len(cams)))
         if len(mi_np) < cfg['min_inl']:
             break
         cin = ci_np[mi_np]
@@ -656,7 +657,12 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             x0, y0, yaw0 = move(np.array([x0, y0, yaw0]), dx, dy, dth)
     else:
         x0, y0, yaw0 = data.first_pose(st0 + dt_ns)
-    X = np.array([x0, y0, yaw0]); P = np.diag([0.05 ** 2, 0.05 ** 2, 0.002 ** 2])
+    if cfg.get('init_pose'):                  # (stamp_ns, x, y, yaw): a given start pose, e.g. a stand-in for L9
+        tp, x0, y0, yaw0 = cfg['init_pose']
+        if st0 + dt_ns > tp:
+            x0, y0, yaw0 = move(np.array([x0, y0, yaw0]), *cs.integrate(int(tp), st0 + dt_ns, st0))
+    s0, s0yaw = cfg.get('init_sigma_xy', 0.05), np.radians(cfg.get('init_sigma_yaw_deg', np.degrees(0.002)))
+    X = np.array([x0, y0, yaw0]); P = np.diag([s0 ** 2, s0 ** 2, s0yaw ** 2])
     kid = cfg.get('kidnap')                   # robustness test: (t since start [s], lon [m], lat [m], yaw [deg])
     if cfg.get('init_offset'):
         kid = [0.0] + list(cfg['init_offset'])
@@ -776,7 +782,7 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             reloc.candidates(list(sets.iloc[k][cams]), prior=X)       # report only, after the timer
             info.update(reloc.last)
         rows.append((stamp, xo, yo, yo_aw))
-        info.update(ms=times[-1], sx=np.sqrt(P[0, 0]), sy=np.sqrt(P[1, 1]))
+        info.update(ms=times[-1], sx=np.sqrt(P[0, 0]), sy=np.sqrt(P[1, 1]), syaw=np.sqrt(P[2, 2]))
         infos.append(info)
         if verbose and k % 200 == 0:
             err = '' if qrun is not None else 'err %.3f' % np.hypot(xo - data.interp_gt([stamp])[0][0], yo - data.interp_gt([stamp])[1][0])

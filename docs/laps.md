@@ -17,6 +17,8 @@ crossing. Lap boundaries are defined in `odo/data.py` (`LAPS`); the folds are in
 | L7 | flying | 1007.7 | 1120.7 | 19:19:24.787 | 113.0 s | 2,978 m | 40.3 | 26.2 | none (0.3 s stop) |
 | L8 | in-lap | 1120.7 | 1194.4 | 19:21:17.817 | 73.7 s | 1,257 m | 30.3 | 17.0 | 28 s in the pit lane |
 
+L9 is the new data in data/ without ground truth - rosbag_2026-10-13_16-08-46_cameras_lap.
+
 ## Cross-validation folds (current protocol)
 
 | fold | map | laps in the map (training) | validation laps | tuning lap |

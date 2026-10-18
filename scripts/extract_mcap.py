@@ -60,8 +60,11 @@ def main(bag, outdir):
         os.makedirs(f'{outdir}/images/{c}', exist_ok=True)
     img_topics = {f'/{NS}/sensor/camera_{c}/compressed_image': c for c in CAMS}
     info_topics = {f'/{NS}/sensor/camera_{c}/camera_info': c for c in CAMS}
+    # the daytime bag (L9) has no state_estimation: its car state is /validation/twist + /accel (base_link)
+    TWIST, ACCEL = f'/{NS}/validation/twist', f'/{NS}/validation/accel'
     topics = list(img_topics) + list(info_topics) + ['/tf', '/tf_static', f'/{NS}/state_estimation',
-                                                     f'/{NS}/track_bounds']
+                                                     f'/{NS}/track_bounds', TWIST, ACCEL]
+    tw_rows, ac_rows = [], []
     gt_f = open(f'{outdir}/gt.csv', 'w', newline=''); gt_w = csv.writer(gt_f)
     gt_w.writerow(['timestamp_ns', 'x', 'y', 'z', 'yaw', 'qx', 'qy', 'qz', 'qw'])
     idx_f = {c: open(f'{outdir}/images/{c}.csv', 'w', newline='') for c in CAMS}
@@ -109,6 +112,10 @@ def main(bag, outdir):
                 if state_keys is None:
                     state_keys = list(d.keys())
                 state_rows.append([d.get(k, '') for k in state_keys])
+            elif t == TWIST:
+                tw_rows.append((stamp(msg.header), msg.twist.linear.x, msg.twist.linear.y, msg.twist.angular.z))
+            elif t == ACCEL:
+                ac_rows.append((stamp(msg.header), msg.accel.linear.x, msg.accel.linear.y))
             elif t == f'/{NS}/track_bounds' and bounds is None:
                 bounds = {}
                 for mk in msg.markers:
@@ -116,6 +123,14 @@ def main(bag, outdir):
     gt_f.close()
     for f in idx_f.values():
         f.close()
+    if state_keys is None and tw_rows:
+        # allowed motion fields only, in the state.csv layout (v_mps = |(vx, vy)|, accel interpolated to the twist stamps)
+        tw = sorted(tw_rows); ac = np.array(sorted(ac_rows), float) if ac_rows else np.zeros((1, 3))
+        state_keys = ['header.stamp.sec', 'header.stamp.nanosec', 'vx_mps', 'vy_mps', 'v_mps', 'wz_radps', 'ax_mps2', 'ay_mps2']
+        for s, vx, vy, wz in tw:
+            s = int(s)
+            state_rows.append([s // 10**9, s % 10**9, vx, vy, math.hypot(vx, vy), wz,
+                               float(np.interp(s, ac[:, 0], ac[:, 1])), float(np.interp(s, ac[:, 0], ac[:, 2]))])
     with open(f'{outdir}/state.csv', 'w', newline='') as o:
         w = csv.writer(o); w.writerow(state_keys); w.writerows(state_rows)
     json.dump(tf_static, open(f'{outdir}/tf_static.json', 'w'), indent=1)

@@ -352,6 +352,8 @@ class Frontend:
         self.cams = cams
         self.resize = resize
         self.aug = None
+        self.mask_bright = 0
+        self.kp_keep, self.n_calls = 1.0, 0
         self.gpu_decode = True
         self.sp = SuperPoint(max_num_keypoints=max_kp).eval().to(DEV)
         self.pool = ThreadPoolExecutor(threads)
@@ -390,12 +392,22 @@ class Frontend:
             x, scale = ImagePreprocessor(resize=self.resize)(x)
         with torch.autocast('cuda', dtype=torch.float16):
             kps, des = sp_batch(self.sp, x)
+        if self.mask_bright:          # no keypoints on or next to light sources (lamps: night only, often repetitive)
+            bm = torch.nn.functional.max_pool2d((x >= self.mask_bright / 255.0).float(), 9, 1, 4)[:, 0] > 0
         out = [None] * len(ims)
         for b, i in enumerate(ok):
             kp, de = kps[b], des[b]
+            keep_b = ~bm[b][kp[:, 1].long().clamp(0, bm.shape[1] - 1), kp[:, 0].long().clamp(0, bm.shape[2] - 1)] \
+                if self.mask_bright else None
             if self.resize:
                 kp = (kp + 0.5) / scale[None] - 0.5
             keep = kp[:, 1] < self.ycut[i] - 6
+            if keep_b is not None:
+                keep &= keep_b
+            if self.kp_keep < 1:      # stress test: keep a random share of the keypoints (fewer correct matches)
+                self.n_calls += 1
+                g = torch.Generator(device=DEV).manual_seed(self.n_calls)
+                keep &= torch.rand(len(kp), generator=g, device=DEV) < self.kp_keep
             out[i] = (kp[keep].double(), de[keep].half())
         return out
 
@@ -439,7 +451,10 @@ class Reloc:
         self.model = load_model('megaloc')
         self.cams = cams
         T, D = [], []
-        for split in ('train', 'val'):
+        import os as _os
+        for split in ('train', 'val', 'L8'):           # descriptor files cover 0-897, 897-1120 and L8
+            if not _os.path.exists(f'{desc_dir}/megaloc_fl_{split}.npz'):
+                continue
             t, d = aligned(desc_dir, 'megaloc', cams, split, ref='fl')
             T.append(t); D.append(np.stack(d, 0))
         t = np.concatenate(T); Dd = np.concatenate(D, 1)
@@ -493,10 +508,13 @@ def measure(fmap, cm, feats, X, cfg, r1, frames=None):
             continue
         if nearest is None:
             nearest = fmap.cams[cam]['T'][fr[0]]
+            xy = fmap.cams[cam]['xy'][fr]                                             # off the mapped lines?
+            info['map_dist'] = float(np.hypot(xy[:, 0] - X[0], xy[:, 1] - X[1]).min())
         Xm, Dm = fmap.gather(cam, fr)
         n = int(fmap.cams[cam]['count_np'][fr].sum())
         Xs.append(Xm); Ds.append(Dm); sl.append((i, o, o + n)); o += n
     if not Xs:
+        info['nomap'] = True              # no map frame near the prediction: off the mapped lines, not "lost"
         return None, None, info
     Xm = torch.cat(Xs).double(); Dm = torch.cat(Ds)
     ci_np = np.concatenate([np.full(b - a, i) for i, a, b in sl])
@@ -522,6 +540,19 @@ def measure(fmap, cm, feats, X, cfg, r1, frames=None):
         uq_all = torch.cat([kq[j] for kq, j in zip(kqs, js)])
         mi = torch.nonzero(good).squeeze(1)
         mi_np = mi.cpu().numpy()
+        if stage == 0 and cfg['sim1_lo'] and len(mi_np) < cfg['lo_below']:
+            # few descriptor matches (e.g. appearance change night -> day): accept weaker similarities, the
+            # projection window and the robust PnP do the disambiguation
+            goods, js = [], []
+            for i, a, b in sl:
+                kq, dq = feats[i]
+                good, j = guided_match_mask(uv[a:b], okp[a:b], Dm[a:b], kq, dq, rad * float(cm.f_np[i]) / 1000.0, cfg['sim1_lo'])
+                goods.append(good); js.append(j)
+            good = torch.cat(goods)
+            uq_all = torch.cat([kq[j] for kq, j in zip(kqs, js)])
+            mi = torch.nonzero(good).squeeze(1)
+            mi_np = mi.cpu().numpy()
+            info['lo'] = True
         if stage == 0:
             info['n_m1'] = len(mi_np)
         if len(mi_np) < cfg['min_inl']:
@@ -544,11 +575,13 @@ def move(X, dx, dy, dth):
     return np.array([X[0] + c * dx - s * dy, X[1] + s * dx + c * dy, wrap(X[2] + dth)])
 
 
-DEFAULT = dict(n_pass=3, sel_radius=8.0, r1=24.0, r2=4.0, sim1=0.75, sim2=0.6, min_inl=30, huber=2.0,
+DEFAULT = dict(n_pass=3, sel_radius=15.0, r1=24.0, r2=4.0, sim1=0.75, sim2=0.6, min_inl=30, huber=2.0,
                q_lon=0.01, q_lat=0.005, q_yaw=0.0005, q0=0.005, r_scale=4.0, r0_pos=0.10, r0_yaw=0.004,
-               gate=16.0, chal_n=4, chal_m=0.3, chal_yaw=0.005, max_kp=2048, r1_grow=40.0, max_gt_acc=1.0,
+               gate=16.0, chal_n=8, chal_m=0.3, chal_yaw=0.005, max_kp=2048, r1_grow=40.0, max_gt_acc=1.0,
                extra_dof=3, prior_rp_deg=0.5, prior_z=0.05, reloc=True, reloc_after=1.0, reloc_every=0.5,
-               reloc_r1=60.0, reloc_min_inl=80)
+               reloc_r1=60.0, reloc_min_inl=80, reloc_sig0=0.5, reloc_sig_rate=2.0, reloc_strong_inl=300,
+               r_inl_ref=0, chal_fixed=True, r_dist_ref=0, sim1_lo=0.0, lo_below=300, mask_bright=0, kp_keep=1.0,
+               reloc_yaw0_deg=0.3, reloc_yaw_rate_deg=0.1, yaw_min_inl=60)   # Exp24 (day transfer); Exp21: 1.0, 2.0, 0
 
 
 def image_sets(split, cams, qrun=None):
@@ -565,7 +598,7 @@ def image_sets(split, cams, qrun=None):
 
 
 def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None, cfg=None, verbose=True, query_root=None,
-        map_until_s=None):
+        map_until_s=None, fold=None):
     """split: 'val' (map = t < 897 s), 'tune'/'dev2' (map = train minus the lap +-10 s) or 'test' (query_root =
     an extracted run, e.g. the hidden test run; map = the whole training run; init = its first pose only)."""
     cfg = dict(DEFAULT, **(cfg or {}))
@@ -573,7 +606,11 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
     os.makedirs(out, exist_ok=True)
     qrun = data.Run(query_root) if query_root else None
     t0 = data.t0_ns(); a, b = data.SPLITS.get(split, (0, 0))
-    if qrun is not None:
+    if fold is not None:              # cross-validation (docs/laps.md): split = a lap, map = the fold's map laps
+        assert split not in data.FOLDS[fold]['map_laps'] or (data.FOLDS[fold].get('day_query') and cfg.get('img_root')), \
+            f'{split} is in the map of {fold}'
+        windows = data.fold_windows(fold)
+    elif qrun is not None:
         windows = [(0, 2 ** 62) if map_until_s is None else (0, t0 + int(map_until_s * 1e9))]
     elif split == 'val':
         windows = [(0, t0 + int(897e9))]
@@ -589,10 +626,15 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
     cm = Cams(cams, qcal)
     fe = Frontend(cams, cfg['max_kp'], cal=qcal)
     fe.aug = cfg.get('aug')
+    fe.mask_bright = cfg['mask_bright']
+    fe.kp_keep = cfg['kp_keep']
     cs = CarState(qrun.allowed_state() if qrun is not None else None)
     sets = image_sets(split, cams, qrun)
     if limit:
         sets = sets.iloc[:limit]
+    if cfg.get('img_root'):                   # same frames, other pixels (e.g. the day proxy, scripts/day_translate.py)
+        for c in cams:
+            sets[c] = [p.replace(data.DATA, cfg['img_root']) if isinstance(p, str) else None for p in sets[c]]
     dt_ns = int(np.load(f'{map_dir}/{cams[0]}.npz')['dt_ns'])
     reloc = Reloc(cams, windows, dt_ns=dt_ns) if cfg['reloc'] else None
     last_reloc = -1e18
@@ -647,7 +689,7 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
         p_meas, cov_meas, info = measure(fmap, cm, feats, X, cfg, r1)
         relocated = False
         if reloc is not None and since > cfg['reloc_after'] and (stamp - last_reloc) / 1e9 >= cfg['reloc_every'] and \
-                (p_meas is None or info.get('n_inl', 0) < cfg['reloc_min_inl'] or n_rej > 0):
+                not info.get('nomap') and (p_meas is None or info.get('n_inl', 0) < cfg['reloc_min_inl'] or n_rej > 0):
             # lost: verify retrieval candidates (and the current estimate) with a wide search radius
             last_reloc = stamp
             best = None
@@ -658,17 +700,41 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             if best is not None and best[2]['n_inl'] >= cfg['reloc_min_inl']:
                 p_meas, cov_meas, info = best
                 relocated = True
+            info['reloc_try'] = 1                     # global retrieval attempted at this frame (report: rates)
+            info['reloc_best_inl'] = best[2]['n_inl'] if best is not None else 0
         # 5. update
         if p_meas is not None:
             Rm = cov_meas * cfg['r_scale'] + np.diag([cfg['r0_pos'] ** 2, cfg['r0_pos'] ** 2, cfg['r0_yaw'] ** 2])
+            if cfg['r_inl_ref']:          # weak fixes (few inliers) count less
+                Rm = Rm * max(1.0, cfg['r_inl_ref'] / max(info['n_inl'], 1))
+            if cfg['r_dist_ref']:         # fixes far from the mapped lines count less (trust odometry more there)
+                Rm = Rm * (1.0 + (info.get('map_dist', 0.0) / cfg['r_dist_ref']) ** 2)
+            Rm_reset = Rm                 # covariance after a jump (reloc / challenger reset) keeps the fix's yaw
+            if info['n_inl'] < cfg['yaw_min_inl']:
+                # weak fix: position only. A PnP yaw from few inliers is less reliable than the car-state yaw rate
+                # (Exp24: a 30-inlier fix moved yaw by 1.6 deg, the filter then drifted 11 m)
+                Rm = Rm.copy(); Rm[2, :2] = Rm[:2, 2] = 0.0; Rm[2, 2] = np.radians(30.0) ** 2
             nu = p_meas - X; nu[2] = wrap(nu[2])
             S = P + Rm
             d2 = float(nu @ np.linalg.solve(S, nu))
             info.update(d2=d2, mx=p_meas[0], my=p_meas[1], myaw=p_meas[2])
-            if relocated and d2 >= cfg['gate']:
-                X = p_meas.copy(); P = Rm + np.diag([0.1 ** 2, 0.1 ** 2, 0.003 ** 2])
+            # innovation = fix minus the dead-reckoning prediction, in the predicted car frame (report: run_report)
+            cy, sy = np.cos(X[2]), np.sin(X[2])
+            info.update(innov=float(np.hypot(nu[0], nu[1])), innov_lon=float(cy * nu[0] + sy * nu[1]),
+                        innov_lat=float(-sy * nu[0] + cy * nu[1]), innov_yaw_deg=float(np.degrees(nu[2])))
+            # a relocalisation jump must be plausible for the time without a fix (dead reckoning drifts slowly),
+            # unless the evidence is very strong
+            sig = cfg['reloc_sig0'] + cfg['reloc_sig_rate'] * since
+            # yaw: car-state dead reckoning drifts ~0.09 deg in 1 s, ~0.4 deg in 10 s (stage 1), so a large yaw jump is
+            # implausible however long the filter went without a fix (Exp24: a 2.5 deg wrong jump caused 7 m drift)
+            sig_yaw = np.radians(cfg['reloc_yaw0_deg'] + cfg['reloc_yaw_rate_deg'] * since)
+            d2_loose = float(nu @ np.linalg.solve(S + np.diag([sig ** 2, sig ** 2, sig_yaw ** 2]), nu))
+            if relocated and d2 >= cfg['gate'] and d2_loose >= cfg['gate'] and info['n_inl'] < cfg['reloc_strong_inl']:
+                info['status'] = 'reloc_rejected'; relocated = False; n_rej += 1
+            elif relocated and d2 >= cfg['gate']:
+                X = p_meas.copy(); P = Rm_reset + np.diag([0.1 ** 2, 0.1 ** 2, 0.003 ** 2])
                 info['status'] = 'reloc'; n_rej = 0; last_fix = stamp; chal, n_chal = None, 0
-            elif d2 < cfg['gate']:
+            elif d2 < cfg['gate'] and info['status'] != 'reloc_rejected':
                 Kg = P @ np.linalg.inv(S)
                 X = X + Kg @ nu; X[2] = wrap(X[2]); P = (np.eye(3) - Kg) @ P
                 info['status'] = 'fix'; n_rej = 0; last_fix = stamp
@@ -676,14 +742,18 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
             else:
                 n_rej += 1; info['status'] = 'gated'
                 # challenger: gated fixes that agree with each other (through dead reckoning) take over
+                # agreement is checked against the challenger's first fix propagated by dead reckoning (chal_fixed),
+                # so a slowly drifting sequence of fixes does not count as consistent
                 if chal is not None and np.hypot(*(p_meas[:2] - chal[:2])) < cfg['chal_m'] and \
                         abs(wrap(p_meas[2] - chal[2])) < cfg['chal_yaw']:
                     n_chal += 1
+                    if not cfg['chal_fixed']:
+                        chal = p_meas.copy()
                 else:
                     n_chal = 1
-                chal = p_meas.copy()
+                    chal = p_meas.copy()
                 if n_chal >= cfg['chal_n']:
-                    X = p_meas.copy(); P = Rm + np.diag([0.1 ** 2, 0.1 ** 2, 0.003 ** 2])
+                    X = p_meas.copy(); P = Rm_reset + np.diag([0.1 ** 2, 0.1 ** 2, 0.003 ** 2])
                     info['status'] = 'reset'; n_rej = 0; last_fix = stamp; chal, n_chal = None, 0
         # output at the image stamp: propagate from t + dt to t with the current speed / yaw rate
         v, wz = cs.at(stamp)
@@ -721,9 +791,10 @@ if __name__ == '__main__':
     ap.add_argument('--video', action='store_true'); ap.add_argument('--cfg', default='{}', help='json overrides')
     ap.add_argument('--query', help='extracted run to localise (split test): images/, state.csv, calib.json, first pose')
     ap.add_argument('--map_until', type=float, help='test mode: use only map frames before this time [s] (plumbing checks)')
+    ap.add_argument('--fold', choices=list(data.FOLDS), help='cross-validation fold: --split is a lap (L0..L8)')
     a = ap.parse_args()
     pred, inf, ms, stat = run(a.split, a.out, a.map, a.cams, a.limit, json.loads(a.cfg), query_root=a.query,
-                              map_until_s=a.map_until)
+                              map_until_s=a.map_until, fold=a.fold)
     if a.query:
         print(f'{len(pred)} poses written to {a.out}/pred.csv, {ms:.1f} ms/frame', stat)
         raise SystemExit

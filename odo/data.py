@@ -10,15 +10,47 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, 'data', 'extracted')
 CAMS = ['fl', 'fr', 'cl', 'cr', 'r', 'rl', 'rr']
 
-# Lap boundaries (start-line crossings, s since first GT stamp) found from the
-# sn idx wrap in state_estimation, see outputs/00_data_overview/timeline.png.
-# Validation = the last two full laps (fastest ones); never tune on them.
+# Laps L0..L8 (start-line crossings, s since the first GT stamp), see docs/laps.md.
+_LAP_STARTS = [0.0, 185.456, 365.569, 523.375, 633.972, 752.192, 896.116, 1007.673, 1120.703, 1194.393]
+LAPS = {f'L{i}': (_LAP_STARTS[i], _LAP_STARTS[i + 1]) for i in range(9)}
+
+# Current protocol: 3-fold cross-validation over laps (docs/laps.md). L5 is always the tuning lap and never in a map;
+# in F1-F3 each of L1, L2, L3, L4, L6, L7 is a validation lap once; F4 adds L0 (out-lap) and re-validates L4, L7 with a
+# 5-lap map. map_cv_fN = feature map restricted to the fold's map laps.
+TUNE_LAP = 'L5'
+FOLDS = {
+    'F1': dict(map='map_cv_f1', map_laps=['L0', 'L2', 'L3', 'L4', 'L7', 'L8'], val=['L1', 'L6']),
+    'F2': dict(map='map_cv_f2', map_laps=['L0', 'L1', 'L3', 'L4', 'L6', 'L8'], val=['L2', 'L7']),
+    'F3': dict(map='map_cv_f3', map_laps=['L0', 'L1', 'L2', 'L6', 'L7', 'L8'], val=['L3', 'L4']),
+    'F4': dict(map='map_cv_f4', map_laps=['L1', 'L2', 'L3', 'L6', 'L8'], val=['L0', 'L4', 'L7']),
+    # F5: F2's map with the roles of L2 and L5 swapped (L2 = tuning lap of this fold). F6: F1's map with L2 replaced by
+    # L5 (L2 = tuning lap). Parameters stay those chosen on L5, so for these folds L5 is not an unseen lap.
+    'F5': dict(map='map_cv_f2_swap', map_laps=['L0', 'L1', 'L3', 'L4', 'L6', 'L8'], val=['L5', 'L7'], tune='L2'),
+    'F6': dict(map='map_cv_f1_swap', map_laps=['L0', 'L5', 'L3', 'L4', 'L7', 'L8'], val=['L1', 'L6'], tune='L2'),
+    # F7: the test-run setting for daylight. Map = all night laps (as for the hidden test run); validation = the day
+    # proxy of L2 (scripts/day_translate.py), whose night frames are in the map: only the appearance changes.
+    'F7': dict(map='map_all', map_laps=[f'L{i}' for i in range(9)], val=['L2'], tune='L5', day_query=True),
+}
+
+
+def tune_lap(fold):
+    return FOLDS[fold].get('tune', TUNE_LAP)
+
+
+def fold_windows(fold):
+    """Map time windows (ns) of a fold: its map laps."""
+    return [(t0_ns() + int(LAPS[l][0] * 1e9), t0_ns() + int(LAPS[l][1] * 1e9)) for l in FOLDS[fold]['map_laps']]
+
+
+# Legacy split (stages 1-2 and the first Exp21 numbers), kept for the old experiments:
+# train = 0-897 s, tune ~ L4, dev2 ~ L5, val ~ L6 + L7.
 SPLITS = {
     'train': (0.0, 897.0),
     'val': (897.0, 1120.0),
     'tune': (632.0, 752.0),   # one training lap used for tuning VO/fusion parameters
     'dev2': (752.0, 897.0),   # second development lap (stage 4), map = train minus this lap +-10 s
     'all': (0.0, 1e9),
+    **LAPS,
 }
 
 

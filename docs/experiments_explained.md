@@ -1,7 +1,8 @@
 # Experiments explained: what was tried, what worked, what failed, and why
 
 This document is for a computer vision engineer who is not a localisation or tracking specialist. It explains
-the reasoning behind stages 1 (visual odometry) and 2 (relocalisation), along with the numbers. Short summaries are in
+the reasoning behind stages 1 (visual odometry), 2 (relocalisation) and 3–4 (the final real-time system, section 6),
+along with the numbers. Short summaries are in
 [`README.md`](README.md); the chronology is in [`progress_log.md`](progress_log.md). Each experiment has its own folder in
 `outputs/NN_*/` with a README, a PDF report, an interactive map (`traj_*.html`) and a debug video.
 
@@ -39,16 +40,38 @@ The standard design is a **filter** (Kalman filter or particle filter). It *pred
 * For a drifting method the absolute RMSE depends mainly on how long it has run. A pure-odometry result (stage 1)
   should therefore be judged by RPE, while an absolute method (stage 2) is judged by RMSE.
 
-### Data split (avoiding self-deception)
+### What "tuning" means here
 
-| split | time [s] | used for |
+**Tuning = choosing the settings of a method by measuring its error on data with known GT, then keeping the
+setting that worked best.** Nothing is trained in this project in the deep-learning sense: all networks (SuperPoint,
+LightGlue, MegaLoc, DINOv2) are used with their published weights. What we tune is a few dozen numbers that the
+methods need, such as thresholds, noise levels, how many map frames to use, or a clock offset.
+
+Every time a setting is chosen because it gave a lower error on some lap, that lap has influenced the method. Its
+error is then no longer an honest estimate of how the method will do on new data. That is why one lap is
+reserved for tuning and never used to report the final numbers. Under the current protocol it is **L5**, which is
+also never in a map. The validation laps are run only after all settings are frozen. Under the legacy split the tuning
+data were the tune lap (632–752 s ≈ L4) and, for stage 4, the dev2 lap (752–897 s ≈ L5).
+
+How tuning works in practice: run the method on the tuning lap with several values of a setting (a "sweep"),
+compare position / lateral / yaw RMSE, keep the best, freeze it. When the differences are within noise, keep the
+simpler or faster option.
+
+What was tuned, per stage:
+
+| stage | tuned on the tuning lap | example |
 |---|---|---|
-| train | 0 – 897 | the map (stage 2) and anything that is learned or calibrated |
-| tune lap | 632 – 752 (one lap inside train) | the **only** data used to choose parameters |
-| val | 897 – 1120 (last two full laps, also the fastest) | final numbers, computed **once** with frozen parameters |
+| 1, VO | per-camera rotation gain, bias and noise σ; fusion scheme | `fr` reports 93.5 % of the true rotation → gain correction |
+| 2, retrieval + PnP | number of retrieved candidates, averaging over cameras, jump guard, and the **image-vs-GT clock offset** | −9.1 ms, fitted from longitudinal error vs. speed |
+| 4, online system (`odo/online.py: DEFAULT`) | cameras used (5 vs 7), 3-DoF vs 6-DoF PnP, measurement noise floor (0.10 m / 0.23°), number of map passes (3), matching thresholds, keypoints (2048), relocalisation gate, challenger rule (8 frames, fixed seed), map selection radius (15 m) | the challenger and relocalisation rules were re-tuned on L5 under all fold maps after the CV run exposed two failures |
 
-For stage 2 the tune-lap queries are matched against "train minus the tune lap ±10 s", so a query can never retrieve
-itself or its immediate neighbours.
+Settings that were **not** tuned but set from physics or the data: the camera calibration and car-body crop, the
+car-state signals used, GT-accuracy threshold for map frames (1 m), PnP priors (0.5° roll/pitch, 5 cm height),
+process noise of the filter. These came from reasoning and were checked on the tuning lap, not optimised.
+
+The stage-4 sweep turned out flat: matching thresholds, map passes, noise floor and keypoint count all gave
+0.103–0.108 m on the development laps. So the result does not hinge on a lucky parameter choice. The two changes
+that mattered (the recovery rules) fixed failure modes rather than shaving millimetres.
 
 ---
 
@@ -235,9 +258,33 @@ roughly by 3× by caching the map features.
 | Retrieval, DINOv2 / MegaLoc | ✓ 1.70 / 1.01 m, no drift | 7-camera similarity averaging; limited by map spacing |
 | Retrieval + triangulation + 3-DoF multi-camera PnP | ✓ 0.160 m, 410 ms | metric geometry on top of retrieval; planar DoF reduction; clock-offset fix |
 | Track-border edge alignment | ✗ makes the pose worse | cameras 0.34–0.42 m high: 0.5 m lateral ≈ 1 px; wrong edges |
-| **Car-state EKF + cached map + guided matching + 6-DoF PnP, 7 cams** | **✓ 0.097 m, 41 ms** | prediction makes matching cheap and safe; all cameras; pitch/roll estimated; GT-quality-aware map |
+| **Car-state EKF + cached map + guided matching + 6-DoF PnP, 7 cams** | **✓ legacy val 0.097 m; lap CV 0.156 m (0.07–0.12 m on well-mapped laps), 41 ms** | prediction makes matching cheap and safe; all cameras; pitch/roll estimated; GT-quality-aware map; recovery checked against dead reckoning |
 
 ## 6. Stages 3–4: the final real-time system (Exp20–22)
+
+### 6.0 Decisions at a glance
+
+✓ = success kept, ✗ = failure (and its fix), – = tried and dropped. Numbers are position RMSE unless noted.
+
+| # | decision / finding | outcome | what we did |
+|---|---|---|---|
+| 1 | Replace per-frame retrieval (Exp12, 410 ms) by tracking: car-state prediction + map | ✓ 0.16 → ~0.10 m, 410 → 41 ms | EKF predicted by vx, vy, wz; fixes from a cached map |
+| 2 | Motion model: car state, **not** visual odometry | ✓ | car-state dead reckoning is ~4× more accurate than our best VO over 1–10 s (section 3); VO is not used in the final system |
+| 3 | Cache the map once (SuperPoint + triangulation with training GT, 20 M points on the GPU) | ✓ | no LightGlue or retrieval while tracking |
+| 4 | Guided matching: project map points with the predicted pose, search ±24 px | ✓ ~1 ms, more matches than LightGlue | |
+| 5 | ✗ One narrow camera (`fr`): yaw and sideways shift nearly interchangeable, 0.41–0.53 m on a lap | fixed | use all 7 cameras in one PnP → 0.12 m |
+| 6 | ✗ Training GT has 2–3 m `pos_accuracy` spikes at fixed spots; those frames poison the map | fixed | prefer map frames away from spikes (GT metadata of the training run) |
+| 7 | Estimate Δpitch, Δroll, Δz relative to the map frame (6-DoF PnP with priors, planar output) | ✓ lateral −10 % | |
+| 8 | ✗ First version 150 ms: GPU float64 Gauss-Newton was launch-bound, many GPU→CPU syncs | fixed | analytic Jacobian on the CPU, batched sync-free matching, GPU JPEG decoding → 40 ms |
+| 9 | ✗ Kidnapped filter (10–80 m off) never recovered | fixed | MegaLoc relocalisation after 1 s without a fix, verified by wide-window PnP → recovery in 1–2 s |
+| 10 | Track-border edge alignment | – dropped | cameras 0.34–0.42 m above the asphalt: 0.5 m lateral ≈ 1 px, below edge noise |
+| 11 | Parameter sweep (matching thresholds, map passes, noise, keypoints) | ✓ but flat: 0.103–0.108 m | the floor is the GT and map consistency, not the matcher |
+| 12 | Photometric stress (gamma, gain, noise, blur) | ✓ ≤ 0.119 m | |
+| 13 | Switch from one val split to lap cross-validation (folds F1–F4, L5 = tuning) | ✓ more honest numbers | `docs/laps.md`, `docs/cv_performance.md` |
+| 14 | ✗ CV: a relocalisation fired while the car was merely off the mapped lines and jumped 18 m to a wrong place (L2: 3.7 m) | fixed | no relocalisation where no map frame is near; a jump must be plausible for the elapsed time (0.5 m + 2 m/s) unless ≥ 300 inliers; selection radius 8 → 15 m → L2 0.30 m |
+| 15 | ✗ CV: the challenger accepted a slowly drifting series of fixes (L5 under F2: 0.41 m) | fixed | compare with the challenger's first fix propagated by dead reckoning, 8 frames → 0.11 m |
+| 16 | Remaining weak spots: lines no map lap drove (L2 warm-up line, pit exit of L0 in F4) | open | the test-run map uses all 9 laps; a map must cover the lines the car will drive |
+| 17 | Rely more on car-state odometry (Exp23): lower fix weight, lower process noise, or lower fix weight only when fixes are weak / far from the map lines | – not adopted | globally worse (L5 0.094 → 0.18–0.23 m); weak-fix-only variants help hard laps (val 0.156 → 0.12–0.13 m, L2 0.30 → 0.21 m) but cost on the tuning lap L5, so not chosen; exposed that a wrong relocalisation can pass the ≥ 300-inlier bypass |
 
 ### 6.1 Why a filter, and why not retrieval every frame
 Exp12 already gave 0.16 m, but it re-solved the full problem from scratch for every frame: retrieval, triangulation
@@ -245,37 +292,77 @@ of the map on the fly, two LightGlue matches per camera. That cost ~410 ms. It a
 retrieval meant one 5 m error. A tracking system can do better on both counts, because between two frames we know
 the motion very well from the car state (dead reckoning drifts only ~2 cm per frame).
 
+**No visual odometry in the final system.** The prediction step uses only the allowed car-state signals (vx, vy, yaw
+rate wz). The camera images enter only through the absolute map fixes. This follows from stage 1 (val, legacy split):
+
+| motion source | RPE 1 s yaw | RPE 10 s drift / yaw | 2 laps, no fixes |
+|---|---|---|---|
+| car-state dead reckoning (Exp01) | **0.087°** | **0.57 % / 0.36°** | **20.5 m** |
+| best camera-only VO (Exp05, planar 7-camera) | 0.34° | 1.25 % / 1.26° | 43.3 m |
+| car state with gyro bias tracked by VO (Exp06) | 0.087° | 0.57 % / 0.37° | 20.6 m (no gain) |
+
+So the car state is about 4× better than VO over 1–10 s, and VO did not even help to correct the car state's slow
+drift. VO would also add a LightGlue match per camera between consecutive frames on top of the map matching. In the
+final system, odometry mostly bridges only 0.1 s between two fixes (98.5–100 % of frames get an accepted fix on the
+mapped CV laps), where dead reckoning errs by ~2 cm. VO would
+matter only if the car state were unavailable or degraded (for example if the test run's speed or yaw-rate signals were
+missing); then Exp05 is the camera-only fallback. Note the caveat from section 7 (question 5): we do not know whether
+the car-state velocities are themselves GNSS-aided.
+
 ### 6.2 Offline: a cached map of the training run (Exp20)
 For every training frame of every camera we extract SuperPoint keypoints, match them with LightGlue to the previous
 and next frame (≥ 1.5 m apart), and triangulate them with the training GT. We store, per point, the pixel, the
 256-D descriptor and the 3D position in `map`: 20 M points, 10.6 GB, loaded on the GPU once. This is the "training
-run becomes a map" idea (method 3a of the slides), done once instead of per query.
+run becomes a map" idea (method 3a of the slides), done once instead of per query. For cross-validation, a fold's
+map is the same data restricted to that fold's laps; for the hidden test run, all 9 laps are used.
 
 ### 6.3 Online, per frame (Exp21)
-1. **Predict** the pose with the car state (vx, vy, wz), causally.
-2. **Select** map frames: the nearest frame from each of the 3 closest laps of the training run.
+1. **Predict** the pose with the car state (vx, vy, wz), causally. No visual odometry (see 6.1).
+2. **Select** map frames: the nearest frame (within 15 m, similar heading) from each of the 3 closest passes of the
+   map laps, preferring frames whose GT was not near an accuracy spike.
 3. **Guided matching.** Project those frames' 3D points into the 7 query images with the *predicted* pose. Each projected
    point only looks for a SuperPoint keypoint within ~24 px with a similar descriptor. Because the prediction is
    good, this replaces both retrieval and LightGlue and costs about a millisecond.
 4. **PnP** over all cameras at once (known extrinsics). The unknowns are x, y, yaw and, with priors, small corrections
    to roll, pitch and height relative to the map frame. The car pitches under braking; ignoring that biased the position.
-5. **Kalman update** with an outlier gate. Two safety nets: (a) if several gated fixes agree with each other, they take
-   over (a "challenger" hypothesis); (b) if nothing is accepted for 1 s, MegaLoc retrieval proposes places, which are
-   verified with a wide-window PnP before resetting the filter.
+5. **Kalman update** with an outlier gate, plus two safety nets:
+   * (a) **Challenger.** If 8 rejected fixes agree with the first of them, carried forward by dead reckoning, they take over.
+   * (b) **Relocalisation.** If nothing is accepted for 1 s while map data is near, MegaLoc retrieval proposes places,
+     which are verified with a wide-window PnP. A jump is accepted only if it is plausible for the time since the
+     last fix, or if the evidence is very strong.
 
 ### 6.4 What we learned
 * **One camera is not enough.** With only `fr` (narrow), a distant wall makes yaw and sideways translation nearly
   interchangeable; the tune lap reached 0.5 m. Adding the side and rear cameras removed this (0.12 m).
-* **The ground truth is not uniformly good.** At one spot the GT's own `pos_accuracy` jumps to 2–3 m on most laps
-  (including both val laps). Map frames recorded there carry the error into the map. We now avoid map frames near
-  such spikes when another lap is available. Using this GT metadata for the map is allowed (training data).
+* **The ground truth is not uniformly good.** At one spot the GT's own `pos_accuracy` jumps to 2–3 m on most laps.
+  Map frames recorded there carry the error into the map, so we avoid them when another lap is available. Using
+  this GT metadata for the map is allowed (training data).
 * **Pitch matters.** Estimating Δpitch/Δroll (with priors) reduced lateral error by ~10 %.
-* **The error floor.** All further parameter changes stay within 0.103–0.108 m on the dev laps. The residual has no
+* **The error floor.** On well-mapped laps all further parameter changes stay within 0.103–0.108 m. The residual has no
   bias and repeats at the same corners on every lap: it is set by the GT (~0.1 m) and by inconsistencies between the
-  laps that form the map, not by the matcher.
+  laps that form the map, not by the matcher. The largest remaining errors (up to 0.45 m) are in hard left turns
+  (lateral acceleration ~5 m/s²) and at a corner exit under acceleration (`outputs/21_online/val/high_error_moments.md`).
 * **Runtime.** The first version took 150 ms. The cost was not the neural network but small numerical operations:
   a Gauss-Newton solver on the GPU in float64 (launch-bound) and repeated GPU→CPU synchronisations. An analytic
   Jacobian on the CPU and batched matching brought the full 7-camera pipeline to **40 ms**, including JPEG decoding.
+* **Safety nets need the same skepticism as measurements.** Both bugs found by cross-validation (14, 15 in the
+  table) were in the recovery logic, not in the matching. Each accepted a jump that dead reckoning said was
+  impossible. Both now check consistency with dead reckoning before overriding the filter.
+* **Coverage of the map is what limits accuracy.** Where the car drives a line that no map lap drove (L2's warm-up
+  line, up to 14 m off; the pit exit of L0 when L0 is not in the map) matches are sparse or absent and the error
+  grows to 1.7–2.4 m. Everywhere else it is 0.07–0.12 m.
+
+### 6.4b Relying more on car-state odometry (Exp23)
+Question: since dead reckoning is so smooth, would trusting it more (and the camera fixes less) lower the error?
+Seven variants were run on every validation lap of F1–F4 and on L5 (`outputs/23_odo_weight/README.md`).
+* **Globally, no.** Raising the fix noise floor to 0.2 / 0.4 m roughly doubles the error on L5 (0.094 → 0.18 / 0.23 m).
+  Odometry drifts (speed scale, yaw-rate bias); the fixes are better than odometry beyond a fraction of a second.
+* **An overconfident filter breaks.** Halving the process noise made the filter reject correct fixes, declare itself
+  lost, and accept an 18 m wrong relocalisation that had 328 inliers (above the 300-inlier "strong evidence" bypass).
+* **Selectively, yes on hard laps.** Down-weighting fixes with few inliers, or fixes taken far from the mapped lines,
+  improves the 6 validation laps from 0.156 to 0.12–0.13 m and L2 from 0.30 to 0.21 m (peak below 1 m). But on the
+  well-mapped tuning lap L5 it costs 0.017–0.026 m, so by the protocol it is not adopted. A cross-track-only or
+  delayed inflation, chosen with held-out-lap tuning, is the next step.
 
 ### 6.5 Track borders (Exp22): tried, dropped
 The surveyed borders project exactly onto the painted edge lines with the GT pose, so the idea is sound. But the
@@ -285,19 +372,37 @@ other edges (the other side of the white line, kerb stripes). The update made th
 segmentation might rescue it, but geometry would still limit it to roughly ±0.3 m.
 
 ### 6.6 Results
-**Val (frozen, computed once): 0.097 m RMSE, median 0.059 m, lateral 0.067 m, yaw 0.094°, 100 % within 0.5 m,
-40.7 ms per frame** (Exp12: 0.160 m, 410 ms). The same pipeline, run in test mode on the dev2 lap packaged as a
-separate run (only its first pose given), scores 0.086 m with the official script.
 
-Robustness checks on the dev laps: gamma 0.5/2, gain 0.4, noise and blur on the query images change the RMSE from
-0.104 m to at most 0.119 m; injected pose errors of 10–80 m are recovered in 1–4 s.
+**Cross-validation over laps (current protocol, `docs/laps.md`, full table in [`cv_performance.md`](cv_performance.md)).**
+Each fold builds its map from 5–6 laps and validates on 2–3 others; L5 is always the tuning lap and never in a map.
+Every lap is run as its own segment from its first GT pose, with parameters frozen.
+
+| fold | validation laps | pos RMSE | median | lateral | yaw | ≤ 1 m |
+|---|---|---|---|---|---|---|
+| F1 | L1 / L6 | 0.080 / 0.083 m | 0.059 / 0.062 m | 0.043 / 0.057 m | 0.055 / 0.074° | 100 / 100 % |
+| F2 | L2 / L7 | 0.302 / 0.089 m | 0.110 / 0.062 m | 0.272 / 0.057 m | 0.254 / 0.088° | 97.5 / 100 % |
+| F3 | L3 / L4 | 0.068 / 0.117 m | 0.052 / 0.074 m | 0.043 / 0.074 m | 0.059 / 0.103° | 100 / 100 % |
+| F4 | L0 / L4 / L7 | 0.686 / 0.117 / 0.088 m | 0.187 / 0.071 / 0.059 m | 0.601 / 0.071 / 0.057 m | 0.470 / 0.101 / 0.083° | 87.2 / 100 / 100 % |
+| **F1–F3 pooled (6 laps, each once)** | | **0.156 m** | **0.066 m** | **0.131 m** | **0.132°** | **99.5 %** |
+
+Runtime ~41 ms per 7-camera image set. L4 was a development lap under the legacy split, so its numbers are slightly
+optimistic. The relocalisation bug (14) was discovered on a validation lap; its fix was tuned on L5 only.
+
+**Legacy split** (val = last two laps ≈ L6 + L7, earlier parameter set): 0.097 m RMSE, median 0.059 m, lateral
+0.067 m, yaw 0.094°, 100 % within 0.5 m, 40.7 ms per frame (Exp12: 0.160 m, 410 ms). In test mode on a lap
+packaged as a separate run (only its first pose given): 0.086 m with the official script.
+
+Robustness checks: gamma 0.5/2, gain 0.4, noise and blur on the query images change the RMSE from 0.104 m to at most
+0.119 m; injected pose errors of 3–80 m are recovered in 1–2 s.
 
 ### 6.7 Remaining risks and next steps
 * **Lighting.** A daylight test run against a night map is untested. Photometric tests are only a proxy. If matching
   fails, the filter falls back on dead reckoning (about 10 m drift per lap) and relocalises when matching returns.
   Mitigation if test-like data appear: add those images to the map (the map builder takes any run with poses).
-* **Different racing line / pit lane.** Map frames are chosen by position, so a different line only means fewer
-  matches; the tune lap's unusual line still gave 0.12 m.
+* **Lines not in the map.** A racing line far from every map lap (as L2) or an unmapped pit section costs 0.3–0.7 m
+  RMSE on that lap. The test-run map uses all 9 laps, including the pit exit (L0) and entry (L8).
+* **Hard corners.** The largest errors on well-mapped laps are at high lateral acceleration (outward lateral error,
+  heading lag). Next to try, on L5: looser roll/pitch priors when |ay| is large, and per-camera weights in turns.
 * **GT quality at the score.** At the GT-spike spots the score depends on the GT's own error there.
 
 ---

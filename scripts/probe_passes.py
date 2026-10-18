@@ -1,14 +1,15 @@
 """Probe: measurement error per map pass at given query times (prior = GT pose at the GT-clock time).
 Shows whether some training passes give inconsistent (biased) fixes.
-    python scripts/probe_passes.py tune fr,cl 712 718 0.5"""
+    python scripts/probe_passes.py tune fr,cl 712 718 0.5 [fold]"""
 import sys; sys.path.insert(0, '.')
 import numpy as np
 from odo import data, online
 split, cams = sys.argv[1], sys.argv[2].split(',')
 ta, tb, step = map(float, sys.argv[3:6])
 t0 = data.t0_ns(); a, b = data.SPLITS[split]
-win = [(0, t0 + int(897e9))] if split == 'val' else [(0, t0 + int((a - 10) * 1e9)), (t0 + int((b + 10) * 1e9), t0 + int(897e9))]
+win = data.fold_windows(sys.argv[6]) if len(sys.argv) > 6 else [(0, t0 + int(897e9))] if split == 'val' else [(0, t0 + int((a - 10) * 1e9)), (t0 + int((b + 10) * 1e9), t0 + int(897e9))]
 cfg = dict(online.DEFAULT)
+cams_all = cams
 fmap = online.FeatureMap('outputs/20_map', cams, win, cfg['max_gt_acc']); cm = online.Cams(cams); fe = online.Frontend(cams)
 sets = online.image_sets(split, cams)
 st = sets.stamp_ns.values

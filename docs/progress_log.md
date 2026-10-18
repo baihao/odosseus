@@ -47,3 +47,33 @@ each step's output or log file.
 [17-12-48] Exp21 val (frozen, once): pos RMSE 0.097 m, lat 0.067 m, yaw 0.094 deg, 100 % < 0.5 m, 40.7 ms/frame (Exp12: 0.160 m, 410 ms)
 [17-12-48] outputs/stage3_summary (summary.pdf, overlay.html, metrics.csv); READMEs for outputs/20_map, 21_online, 22_borders
 [17-13-02] Docs: evaluate.py scope - predictions cover only val (897-1120 s); coverage is over the GT file span, so val is scored with GT cut to val (outputs/21_online/val/gt_val.csv)
+[17-14-44] Val high-error analysis (outputs/21_online/val/high_error_moments.md): top 5 peaks = 3 places, repeated on both laps (corner exit +0.22 m lon; left turns at ay~5 m/s2, up to 0.45 m lateral outward)
+[17-15-54] New protocol: laps L0-L8 (docs/laps.md as table), 3-fold lap CV F1-F3 (+F4 added by user), L5 = tuning lap; odo/data.py LAPS/FOLDS, online --fold
+[17-15-54] First CV run: F1 0.08, F3 0.07-0.12, but F2/L2 3.7 m (false MegaLoc relocalisation, 18 m jump while off the mapped lines) and F2/L5 0.41 m (drifting challenger)
+[17-15-54] Fixes tuned on L5 only: no reloc when no map nearby, plausibility gate for reloc jumps (0.5 m + 2 m/s, or >= 300 inliers), selection radius 15 m, fixed-seed challenger with 8 frames; F2/L5 0.41 -> 0.11 m; kidnaps still recover in 1-2 s
+[17-15-54] Final CV (frozen): F1-F3 pooled over 6 laps 0.156 m (median 0.066, lat 0.131, yaw 0.132 deg, 99.5 % < 1 m); per lap 0.07-0.12 m except L2 0.30 m (off-line lap); F4/L0 0.69 m (pit exit unmapped); 41 ms alone
+[17-16-01] docs/cv_performance.md: performance table per fold and validation lap (scripts/cv_table.py)
+[17-16-11] docs/experiments_explained.md: section 6 rewritten (decision shortlist, CV results, recovery-logic lessons), data split section moved to the lap protocol
+[17-16-25] Docs: final system uses no VO (car state ~4x better than best VO over 1-10 s; Exp06 VO-aided gyro no gain) - stated in experiments_explained 6.0/6.1 and README
+[17-16-37] docs/experiments_explained.md: added 'What tuning means here' (definition, tuning lap L5, what was tuned per stage)
+[17-16-49] docs/precomputed_data.md: sizes/locations of precomputed data (map 10.6 GB, 19.9 M points; MegaLoc 1.4 GB; both git-ignored)
+[17-17-05] Folds F5 (F2 map, L2/L5 roles swapped) and F6 (= F1) run: F5 reproduces F2 (L5 0.111, L7 0.089, L2 0.302 m), F6 reproduces F1 within 1 mm; docs/cv_performance.md, laps.md updated
+[17-17-55] F6 redefined by user (F1 map with L2->L5, tune L2) and rerun: L1 0.082, L6 0.080, L2 0.154 m (vs 0.302 under F2 map); F5 per-frame error plot docs/figures/F5_per_frame_error.png (scripts/plot_per_frame.py)
+[17-18-12] F5/L2 diagnostics figure (docs/figures/F5_L2_diagnostics.png, scripts/plot_lap_diagnostics.py): error peak = 8.5 m off the map lines + inlier collapse in all camera groups + MegaLoc top-1 10 m off; corr(err, dist to map) 0.49
+[17-19-03] F5/L2 lateral vs longitudinal error plot (docs/figures/F5_L2_lat_lon.png): lateral = 81 % of squared error, lon max 0.60 m
+[17-19-04] outputs/21_online/cv/F5/L2/report_L2.pdf: appended lateral/longitudinal and diagnostics pages (6 pages)
+[17-19-37] Exp23 (outputs/23_odo_weight): relying more on car-state odometry - global down-weighting of fixes worse (L5 0.094 -> 0.18-0.23 m); halved process noise -> overconfident filter, 18 m false reloc on L2 (328 inliers > 300 bypass); weak-fix-only variants (rinl400, rdist3) help val (0.156 -> 0.134/0.123 m, L2 0.21 m) but cost on L5 -> not adopted
+[18-09-43] Exp24 (night -> day transfer): day proxy = CycleGAN-Turbo night_to_day (img2img-turbo, BDD100k) on the query images, env daytrans, scripts/day_translate.py
+[18-10-33] Day proxy of L2 (all 7 cams); harder variant day_nolights (lamps/lit windows >= 200 removed before translation, as in daylight) at 18-10-49; only 4-13 % of map points lie on light sources
+[18-10-39] Night F5/L2: masking query keypoints on light sources -> 4.2 m (lamps carry along-track information) -> not used
+[18-10-52] Unchanged system on day proxies, F5/L2 (map = night laps): day 0.200 m, day_nolights 0.220 m vs night 0.302 m; 97-98 % frames with a map fix, PnP inliers 65-73 % of night
+[18-10-51] odo/run_report.py: per-run PDF (pos/lat/lon error, innovation fix - dead-reckoning prediction, fix rate, global-retrieval attempts/fixes, inliers, zoom on the worst error); online.py logs innov*, reloc_try
+[18-11-00] Stress on day_nolights: keep 50/25 % keypoints 0.204/0.227 m; keep 10 % 2.46 m; gain 1.6 (overexposed) 1.24 m; gamma 1.8 0.232 m
+[18-11-13] Failure 1 (gain 1.6): a 129-inlier relocalisation jumped 2.5 deg in yaw after 1 s of gating -> 7 m drift. Reloc yaw plausibility 0.3 deg + 0.1 deg/s (DR yaw drift ~0.09 deg/s): gain16 1.24 -> 0.46 m; night L2, L5, day proxies, kidnaps unchanged
+[18-11-27] Failure 2 (keep 10 %): a 30-inlier fix moved yaw 1.6 deg -> correct fixes gated, 11 m drift. Weak fixes (< 60 inliers) now update position only: keep10 2.46 -> 0.39 m, day_nolights 0.220 -> 0.190, night L2 0.302 -> 0.299, L5 unchanged; 100 inliers hurts night L2 (0.61 m)
+[18-11-27] run_report.py also writes outputs/<run>/summary.md (setup, cfg diff, metrics vs reference, fix stats, worst error episodes)
+[18-11-56] Untouched lap F5/L7: day_nolights 0.082 m vs night 0.089 m (100 % map fixes, 67 % of night inliers); final config = Exp21 there; MegaLoc retrieval on day proxies: best-of-4 within 15 m 100 % (night 99.4 %)
+[18-11-56] New defaults (reloc_yaw0_deg 0.3, reloc_yaw_rate_deg 0.1, yaw_min_inl 60); kidnaps still recover in 1.0-3.4 s; outputs/24_day/summary.md, docs/final_method.md
+[18-12-20] F7 (map = all night laps, val = day proxy of L2, final config): day 0.066 m, day_nolights 0.067 m vs night self-matching floor 0.067 m; 58-63 % of night inliers, 100 % map fixes (upper bound: same viewpoints as the map)
+[18-12-36] Better day proxy: Qwen-Image-Edit-2509 (20B, Apache-2.0) + Lightning 4-step LoRA, instruction "midday sun, all lights off, geometry unchanged" (env qwenedit, scripts/day_translate_qwen.py); realistic sun, shadows, lamps off; 1.3 s/image
+[18-12-41] Qwen output is shifted/zoomed vs the source (median 13.6 px; 7.9 px with 32-px-aligned sizes) -> scripts/register_proxy.py warps each output onto its night frame with one LightGlue homography: 2.9 px residual (local warping, CycleGAN 1.5 px); full L2 translation started (~4 h), -> data/day_proxy/L2_qwen_raw -> L2_qwen

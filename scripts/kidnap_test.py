@@ -6,8 +6,9 @@ from odo import online, report, data
 split = sys.argv[1]; t_k, lon, lat, yaw = map(float, sys.argv[2:6])
 extra = json.loads(sys.argv[6]) if len(sys.argv) > 6 else {}
 fold = sys.argv[7] if len(sys.argv) > 7 else None
+root = sys.argv[8] if len(sys.argv) > 8 else 'outputs/21_online/robustness'
 name = (f'{fold}_' if fold else '') + f'kidnap_{split}_{t_k:g}_{lon:g}_{lat:g}_{yaw:g}' + ('_' + '_'.join(f'{k}{v}' for k, v in extra.items()) if extra else '')
-out = f'outputs/21_online/robustness/{name}'
+out = f'{root}/{name}'
 cfg = dict(extra_dof=3, kidnap=[t_k, lon, lat, yaw], **extra)
 pred, inf, ms, stat = online.run(split, out, cfg=cfg, verbose=False, limit=int((t_k + 40) * 10), fold=fold)
 p = report.load_pred(f'{out}/pred.csv'); gx, gy, _ = data.interp_gt(p.timestamp_ns.values)

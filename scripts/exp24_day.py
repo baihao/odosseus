@@ -19,6 +19,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument('name'); ap.add_argument('images', choices=list(ROOTS)); ap.add_argument('cfg', nargs='?', default='{}')
 ap.add_argument('--fold', default='F5'); ap.add_argument('--lap', default='L2'); ap.add_argument('--video', action='store_true')
 ap.add_argument('--limit', type=int)
+ap.add_argument('--root', default='outputs/24_day', help='output root')
 ap.add_argument('--cams', nargs='+', default=data.CAMS, help='cameras used for localisation (default all 7)')
 a = ap.parse_args()
 cfg = json.loads(a.cfg)
@@ -26,12 +27,12 @@ if ROOTS[a.images]:
     cfg['img_root'] = os.path.abspath(ROOTS[a.images].format(lap=a.lap))
 if list(a.cams) != list(data.CAMS):         # camera subset: part of the run name (night reference must match)
     a.name = f'{a.name}_{"".join(a.cams)}'
-out = f'outputs/24_day/{a.images}/{a.name}/{a.fold}_{a.lap}'
+out = f'{a.root}/{a.images}/{a.name}/{a.fold}_{a.lap}'
 pred, inf, ms, stat = online.run(a.lap, out, cams=a.cams, fold=a.fold, cfg=cfg, verbose=True, limit=a.limit)
 m = online.evaluate(out, a.lap, f'Exp24 {a.name}, {a.images} images, {a.fold}/{a.lap}', ms, stat, video=a.video,
                     extra=dict(fold=a.fold, images=a.images, cfg=json.dumps(cfg)))
 from odo import run_report
-ref = f'outputs/24_day/night/{a.name}/{a.fold}_{a.lap}'
+ref = f'{a.root}/night/{a.name}/{a.fold}_{a.lap}'
 run_report.make(out, f'Exp24 {a.name}, {a.images} images, {a.fold}/{a.lap}',
                 ref=ref if a.images != 'night' and os.path.exists(f'{ref}/pred.csv') else None, ref_name='night images',
                 meta={'fold / map laps': f'{a.fold} / {" ".join(data.FOLDS[a.fold]["map_laps"])} (night map)',

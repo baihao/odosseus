@@ -170,7 +170,7 @@ class Dashboard:
         ax.set_yticks([])
         for s in ax.spines.values():
             s.set_visible(False)
-        allp = np.vstack([p[:, :2] for p in d['bounds'].values()])
+        allp = np.vstack([p[:, :2] for p in d['bounds'].values()] or [np.c_[d['x'], d['y']]])   # no borders: the path
         for name, p in d['bounds'].items():
             ax.plot(p[:, 0], p[:, 1], color=GRID if 'pit' in name else AXIS, lw=0.9, zorder=1)
         ax.plot(*d['ref_xy'], color=MUTED, lw=0.9, alpha=0.6, zorder=2)

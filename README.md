@@ -23,8 +23,7 @@ odo/              the localiser: online.py (filter, matching, PnP, relocalisatio
 scripts/          bag extraction, checkpoint tools, and the experiments behind the numbers below
 assets/           the approach figure
 Presentation/     the slides (HTML and LaTeX Beamer)
-visualization/    the dashboard used for the presentation videos; it runs on the pipeline in localization/ of
-                  branch praffulr_dev, not on this branch
+visualization/    a 10 Hz dashboard of a run (track, errors or health signals, camera fixes, metrics) -> mp4
 ```
 
 ## Approach
@@ -207,6 +206,9 @@ python scripts/sweep_online.py <name> '<cfg json>' # one setting on the developm
 Results are written under `outputs/` (one folder per run, with `pred.csv`, `online_info.csv` and the metrics).
 `--video` adds the visualisation of a validation lap: `report_<lap>.pdf` (track map coloured by error, errors over
 time), `traj_<lap>.html` (interactive) and `debug_<lap>.mp4` (camera view next to a local map with live errors).
+The 10 Hz dashboard video of any run: `python visualization/run_viz.py mapped outputs/21_online/cv/F5/L7` (with
+ground truth) or `python visualization/run_viz.py test outputs/submission` (a `run.sh` output, no ground truth);
+see [`visualization/README.md`](visualization/README.md).
 
 ## Pretrained models (declared)
 

@@ -1,7 +1,7 @@
-"""Per-frame errors and running metrics with the official math (camloc.metrics = tools/evaluate.py).
+"""Per-frame errors and running metrics with the official math (reference.metrics = tools/evaluate.py).
 
-The GT is cut to the chunk, like the per-lap GT files of localization D-004, so coverage is measured
-over the chunk. At the end, the running values must equal camloc.metrics.score on the same poses.
+The GT is cut to the chunk, like the per-lap GT files of the cross-validation, so coverage is measured
+over the chunk. At the end, the running values must equal reference.metrics.score on the same poses.
 """
 import numpy as np
 
@@ -48,10 +48,12 @@ class RunningMetrics:
         }
 
     def final(self):
-        """camloc.metrics.score on the whole chunk; asserts the running values at the last frame agree."""
+        """reference.metrics.score (= tools/evaluate.py) on the whole chunk; asserts the running values at the last
+        frame agree. Coverage is not compared: the running value counts the 1 s bins begun up to the last pose,
+        the official one every bin of the GT cut (20 ms longer), so they can differ by one bin."""
         sc = metrics.score(self.gt, self.ts, self.x, self.y, self.yaw)
         run = self.at(len(self.ts) - 1)
         for k in ('pos_rmse_m', 'lat_rmse_m', 'lon_rmse_m', 'yaw_rmse_deg', 'within_1.0_pct', 'pos_median_m',
-                  'pos_p95_m', 'coverage_pct'):
+                  'pos_p95_m'):
             assert abs(sc[k] - run[k]) < 1e-9, (k, sc[k], run[k])
         return sc

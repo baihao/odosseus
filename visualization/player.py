@@ -11,6 +11,10 @@ import numpy as np
 
 
 def mp4(dash, path, fps=10, hold_s=3.0):
+    """Every frame at 10 fps: H.264 through ffmpeg when it is installed, else OpenCV's mp4v writer."""
+    import shutil
+    if shutil.which('ffmpeg') is None:
+        return _mp4_opencv(dash, path, fps, hold_s)
     canvas = dash.fig.canvas
     canvas.draw()
     w, h = canvas.get_width_height()
@@ -29,7 +33,26 @@ def mp4(dash, path, fps=10, hold_s=3.0):
     p.stdin.close()
     if p.wait() != 0:
         raise RuntimeError('ffmpeg failed')
-    return {'frames': dash.n, 'render_s': time.perf_counter() - t, 'size': [w, h]}
+    return {'frames': dash.n, 'render_s': time.perf_counter() - t, 'size': [w, h], 'encoder': 'ffmpeg libx264'}
+
+
+def _mp4_opencv(dash, path, fps, hold_s):
+    import cv2
+    canvas = dash.fig.canvas
+    canvas.draw()
+    w, h = canvas.get_width_height()
+    vw = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+    frame = lambda: cv2.cvtColor(np.asarray(canvas.buffer_rgba()), cv2.COLOR_RGBA2BGR)
+    t = time.perf_counter()
+    for k in range(dash.n):
+        dash.render(k)
+        vw.write(frame())
+    dash.render(dash.n - 1, final=True)
+    last = frame()
+    for _ in range(int(hold_s * fps)):
+        vw.write(last)
+    vw.release()
+    return {'frames': dash.n, 'render_s': time.perf_counter() - t, 'size': [w, h], 'encoder': 'opencv mp4v'}
 
 
 def live(dash, stamps, speed=1.0, hold=True):

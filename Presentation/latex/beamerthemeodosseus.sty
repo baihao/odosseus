@@ -433,15 +433,15 @@
   \ifcase\value{odsum}\or\def\bc{signal}\or\def\bc{amber}\else\def\bc{sea}\fi
   \noindent{\color{\bc}\rule[-0.05em]{8\px}{64\px}}\hspace{22\px}%
   {\headfont\pxfont{84}{1.0}\addfontfeature{LetterSpace=-2}\color{white}#1}\par\vspace{6\px}%
-  \noindent\hspace*{32\px}\begin{minipage}[t]{640\px}\raggedright{\intermedium\pxfont{22}{1.35}\color{hltext}#2}\end{minipage}\par\vspace{26\px}}
+  \noindent\hspace*{32\px}\begin{minipage}[t]{460\px}\raggedright{\intermedium\pxfont{22}{1.35}\color{hltext}#2\par}\end{minipage}\par\vspace{26\px}}
 \newcommand\summaryfigslide[4]{%
   {\odnavytrue\renewcommand\odkickertext{hltext}\setcounter{odsum}{0}%
    \begin{frame}[t]
      \vspace*{\dimexpr64\px-\baselineskip\relax}
      \kicker{#1}{#2}\vspace{36\px}
-     \noindent\begin{minipage}[c]{680\px}#4\end{minipage}\hspace*{28\px}%
-     \begin{minipage}[c]{640\px}%
-       \tikz\node[fill=white, rounded corners=14\px, inner sep=14\px]{\includegraphics[width=610\px]{#3}};%
+     \noindent\begin{minipage}[c]{500\px}#4\end{minipage}\hspace*{28\px}%
+     \begin{minipage}[c]{860\px}%
+       \tikz\node[fill=white, rounded corners=14\px, inner sep=14\px]{\includegraphics[width=830\px]{#3}};%
      \end{minipage}
    \end{frame}}}
 

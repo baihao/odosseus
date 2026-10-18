@@ -54,7 +54,7 @@
       \point{\textbf{Learned SLAM} (MASt3R-SLAM, VGGT-Long): lost track or 313 m error. 4 m between frames at night is too much.}
       \point{\textbf{Visual odometry}: best camera-only VO 43 m over 2 laps, vs 20.5 m from car state alone.}
       \point{\textbf{Track-border alignment}: cameras sit 0.4 m high, so 0.5 m sideways moves the border \textasciitilde 1 px.}
-      \point{\textbf{Trusting odometry everywhere}: global down-weighting of fixes doubled the error on L5.}}
+      \point{\textbf{Trusting odometry everywhere}: global down-weighting of fixes doubled the error on a well-mapped lap.}}
     \card{ok}{Why we chose this}{
       \point{\textbf{Car state for motion}: 4× more accurate than VO over 1–10 s. Cameras do what odometry can't: absolute fixes.}
       \point{\textbf{Prediction makes matching cheap}: guided search replaces retrieval, 410 \ra{} 41 ms.}
@@ -70,6 +70,9 @@
   \kicker{04}{Ablation studies}
   \slidetitle{Ablations and \highlight{stress tests}}
   \begin{ablations}[210]{326}{4}    % [card height px]{card width px}{cards per row}
+    \ablation{Odometry}{No visual odometry}
+      {Car-state dead reckoning beats our best camera-only VO (43 m).}
+      {20.5 m over 2 laps}
     \ablation{Cross-validation}{Plausible jumps only}
       {A jump must fit the time without a fix, or have \ensuremath{\geq} 300 inliers.}
       {F2/L2: 3.7 \ra{} 0.30 m}
@@ -79,9 +82,6 @@
     \ablation{Runtime}{Cached 3D points}
       {Triangulated once offline; each frame only matches the cached points.}
       {410 \ra{} 41 ms per frame}
-    \ablation{Odometry}{No visual odometry}
-      {Car-state dead reckoning beats our best camera-only VO (43 m).}
-      {20.5 m over 2 laps}
   \end{ablations}
 
   \slidefigure{images/l2_position_lateral_error.png}{1200}

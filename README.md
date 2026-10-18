@@ -20,7 +20,7 @@ run.sh            single run script: test bag + first pose -> submission.csv
 requirements.txt  inference dependencies
 odo/              the localiser: online.py (filter, matching, PnP, relocalisation; DEFAULT = final parameters),
                   map_build.py, vpr.py (MegaLoc), first_pose.py, data.py, metrics.py (= tools/evaluate.py), reports
-scripts/          bag extraction, checkpoint tools, and the experiments behind the numbers below
+scripts/          bag extraction, train_ref build, and the experiments behind the numbers below
 assets/           the approach figure
 Presentation/     the slides (HTML and LaTeX Beamer)
 visualization/    a 10 Hz dashboard of a run (track, errors or health signals, camera fixes, metrics) -> mp4
@@ -53,33 +53,6 @@ training image set. These are the checkpoints. The test run is never added to th
 
 Every image set gets a pose, stamped with its image header stamp. The camera clock was calibrated against the GT
 clock (−9.1 ms). All parameters are in `odo/online.py: DEFAULT`.
-
-## Design decisions and how they were validated
-
-* **Car state, not visual odometry, for the prediction.** Dead reckoning from the car state alone ends at 20.5 m
-  RMSE over two laps (223 s). The best camera-only visual odometry we built reached 43 m, and over 1–10 s the car
-  state is about 4× more accurate. So the cameras are used only for absolute fixes against the map
-  (`scripts/exp01_deadreckoning.py`; the visual-odometry experiments are in commit `d93e142` of `main`).
-* **Only plausible relocalisation jumps.** In the first cross-validation, one false MegaLoc relocalisation cost the
-  hardest lap L2 3.7 m RMSE: an 18 m jump while the car was off the mapped lines. Since then a jump must be plausible
-  for the time without a fix or be backed by at least 300 inliers, and no relocalisation is tried where no map is
-  near. L2 went from 3.7 m to 0.30 m.
-* **What is tuned.** The parameters that matter are the number of keypoints, the SuperPoint descriptor similarity
-  thresholds, the EKF process noise and the PnP covariance multiplier. During development, sweeps over these, the
-  number of map passes, the noise floors and the priors all landed at 0.103–0.108 m on the development laps, next to
-  the GT's own accuracy (~0.1 m). The optimum is flat (`scripts/sweep_online.py`, `scripts/tune_l5.py`).
-* **Why sweeps and lap cross-validation.** They show that the ~40 parameters are not tuned to one train/validation
-  split, check that no lap has a failure mode, and find cheaper settings. Each lap was held out of the map once.
-  Parameters were chosen on one tuning lap (L5) only, which is in none of those maps.
-* **Kidnap test.** A wrong pose is injected into the running filter, as after a bad fix or a long blind stretch.
-  Errors of 3–80 m and up to 20° are recovered (below 0.3 m for 1 s) after 1.0–3.4 s
-  (`scripts/exp24_kidnap_final.sh`).
-* **Weak matching must not take over the filter.** Three rules act only when matching is weak or a relocalisation
-  jump is large, so well-matched laps are unchanged:
-  * weak fixes (fewer than 60 inliers) update the position only; the heading stays with the car-state yaw rate;
-  * a relocalisation must be plausible in yaw (0.3° + 0.1°/s, about 3–4× the measured dead-reckoning yaw drift);
-  * it must also be plausible in position (0.5 m + 0.3 m/s, the measured p95 drift of dead reckoning,
-    `scripts/dr_calibration.py`).
 
 ## Results with the submitted configuration
 
@@ -130,10 +103,39 @@ Python 3.11 and one CUDA GPU with about 12 GB of memory (tested on an H100 NVL, 
 ```bash
 conda create -n odosseus python=3.11 && conda activate odosseus
 pip install -r requirements.txt
+pip install gdown                            # downloads the precomputed checkpoints (quick start, step 1)
 ```
 
 The networks download on first use: SuperPoint from GitHub, and MegaLoc's code from GitHub and its weights from
 Hugging Face. The first run needs internet.
+
+## Quick start: from the downloads to a submission
+
+All commands run from the repository root.
+
+```bash
+# 1. Download the precomputed points (checkpoints):
+gdown --folder https://drive.google.com/drive/folders/1jEA1QngpjDnYhwHLDMuArZ6TJQ4fbZSW
+
+# 2. Unzip the original dataset to here:
+#    data/c0_2026-10-13_22-53-42_camloc
+
+# 3. checkpoints: map + MegaLoc descriptors -> outputs/20_map, outputs/10_vpr_desc
+unzip -o camloc/precomputed_camloc.zip "outputs/*"
+
+# 4. training bag -> data/extracted (images, gt.csv, state.csv, calib)
+python scripts/extract_mcap.py data/c0_2026-10-13_22-53-42_camloc/c0_2026-10-13_22-53-42_camloc_0.mcap data/extracted
+
+# 5. outputs/20_map/train_ref.npz (not in the zip; run.sh refuses to start without it)
+python scripts/build_train_ref.py
+
+# 6. run.sh (the training bag is the only bag here)
+./run.sh data/c0_2026-10-13_22-53-42_camloc/c0_2026-10-13_22-53-42_camloc_0.mcap outputs/submission --first_pose
+```
+
+Step 6 checks the whole pipeline end to end. The training run's frames are also in the map, so its error is not a
+validation result (see [Night validation](#night-validation) for those). For the hidden test run, replace the bag:
+`./run.sh <test.mcap> outputs/submission --first_pose`.
 
 ## Checkpoints
 
@@ -143,9 +145,8 @@ Hugging Face. The first run needs internet.
 | `outputs/20_map/train_ref.npz` | small | training GT poses and the GT accuracy flag, read at inference (map filter, relocalisation database, stand-in start) |
 | `outputs/10_vpr_desc/megaloc_<cam>_{train,val,L8}.npz` | 1.4 GB | MegaLoc descriptors of the training images (relocalisation database) |
 
-Load them with `bash scripts/download_checkpoints.sh <URL or folder>`. The script copies or downloads them into
-`outputs/` and checks them against `checkpoints.sha256`. `./run.sh` stops with this instruction when one is
-missing; the training bag is not needed at inference. The checkpoints contain data derived from the challenge
+The map and the MegaLoc descriptors come from the download (quick start, steps 1 and 3); `train_ref.npz` is built
+from the training bag (steps 4 and 5). `./run.sh` lists any missing file and stops. The checkpoints contain data derived from the challenge
 dataset ("for use in the National AI Hackathon 2026 only, no redistribution"), so they are shared privately with the
 organizers. To rebuild them from the training bag, see [Reproduce the results](#reproduce-the-results).
 
@@ -172,11 +173,10 @@ Output in `<out_dir>` (default `outputs/submission`):
 
 ## Reproduce the results
 
-The training bag is extracted to `data/extracted`. All commands run from the repository root.
+After quick-start steps 2 and 4 (the training bag extracted to `data/extracted`). All commands run from the
+repository root.
 
 ```bash
-python scripts/extract_mcap.py data/c0_2026-10-13_22-53-42_camloc/c0_2026-10-13_22-53-42_camloc_0.mcap data/extracted
-
 # checkpoints (instead of downloading them; ~70 min on one GPU)
 for c in fl fr cl cr r rl rr; do python -m odo.map_build --cams $c --out outputs/20_map; done
 python -m odo.vpr --model megaloc --cams fl fr cl cr r rl rr --splits train val L8 --out outputs/10_vpr_desc
@@ -195,7 +195,7 @@ python scripts/make_fake_test.py data/fake_test
 python -m odo.online --split test --query data/fake_test --out outputs/fake_test \
     --first_pose data/fake_test/first_pose.csv --map_until 897
 
-# design decisions
+# baselines and robustness
 python scripts/exp01_deadreckoning.py        # car state alone
 bash scripts/exp24_kidnap_final.sh           # kidnap recovery
 python scripts/dr_calibration.py             # dead-reckoning drift against the GT

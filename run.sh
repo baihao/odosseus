@@ -63,7 +63,7 @@ for c in $CAMS; do
 done
 [ -f outputs/20_map/train_ref.npz ] || missing="$missing outputs/20_map/train_ref.npz"
 [ -z "$missing" ] || die "checkpoints missing:$missing
-  load them with: bash scripts/download_checkpoints.sh <URL or folder> (README: Checkpoints)"
+  see README, Quick start: steps 1 and 3 (map, MegaLoc descriptors) and 4-5 (train_ref.npz)"
 [ -d outputs/torch_home ] && export TORCH_HOME=$PWD/outputs/torch_home
 mkdir -p "$OUT"
 exec > >(tee -a "$OUT/run.log") 2>&1

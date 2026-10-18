@@ -63,7 +63,7 @@ TRAIN_REF = os.path.join(ROOT, 'outputs', '20_map', 'train_ref.npz')
 def _train_ref(name):
     if not os.path.exists(TRAIN_REF):
         raise FileNotFoundError(f'training data not found: neither {DATA} (scripts/extract_mcap.py on the training '
-                                f'bag) nor {TRAIN_REF} (checkpoints, scripts/download_checkpoints.sh)')
+                                f'bag) nor {TRAIN_REF} (scripts/build_train_ref.py; README, Quick start)')
     z = np.load(TRAIN_REF)
     cols = [str(c) for c in z[f'{name}_cols']]
     d = pd.DataFrame({c: z[f'{name}_{i}'] for i, c in enumerate(cols)})

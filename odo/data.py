@@ -10,11 +10,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, 'data', 'extracted')
 CAMS = ['fl', 'fr', 'cl', 'cr', 'r', 'rl', 'rr']
 
-# Laps L0..L8 (start-line crossings, s since the first GT stamp), see docs/laps.md.
+# Laps L0..L8 (start-line crossings, s since the first GT stamp).
 _LAP_STARTS = [0.0, 185.456, 365.569, 523.375, 633.972, 752.192, 896.116, 1007.673, 1120.703, 1194.393]
 LAPS = {f'L{i}': (_LAP_STARTS[i], _LAP_STARTS[i + 1]) for i in range(9)}
 
-# Current protocol: 3-fold cross-validation over laps (docs/laps.md). L5 is always the tuning lap and never in a map;
+# Current protocol: 3-fold cross-validation over laps. L5 is always the tuning lap and never in a map;
 # in F1-F3 each of L1, L2, L3, L4, L6, L7 is a validation lap once; F4 adds L0 (out-lap) and re-validates L4, L7 with a
 # 5-lap map. map_cv_fN = feature map restricted to the fold's map laps.
 TUNE_LAP = 'L5'

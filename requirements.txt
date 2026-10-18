@@ -1,5 +1,5 @@
 # Inference (./run.sh with the provided checkpoints). Python 3.11, one CUDA GPU (developed on an H100 NVL, CUDA 12.4).
-# Versions = the tested environment (full freeze: docs/environment_freeze.txt).
+# Versions = the tested environment.
 #   conda create -n odosseus python=3.11 && conda activate odosseus
 #   pip install -r requirements.txt
 --extra-index-url https://download.pytorch.org/whl/cu124
@@ -20,4 +20,4 @@ mcap==1.5.0
 mcap-ros2-support==0.5.7
 zstandard==0.25.0
 lz4==4.4.5
-# Research only (rebuilding the checkpoints, reports of the experiments in docs/): plotly==7.1.0, kornia==0.8.3
+# Research only (rebuilding the checkpoints, the experiments in the README): plotly==7.1.0, kornia==0.8.3

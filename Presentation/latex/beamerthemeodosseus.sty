@@ -304,6 +304,37 @@
   \end{minipage}\ignorespaces}
 
 % ---------------------------------------------------------------------
+%  Ablation cards (slide 4): <per row> cards of <width> px, a new row after every <per row> cards
+%    \begin{ablations}[<card height px>]{<card width px>}{<per row>} \ablation{Kicker}{Title}{Text}{result tag} ... \end{ablations}
+%  (per row x width + (per row - 1) x 28 px = 1408 px: e.g. 3 x 450, 4 x 331)
+% ---------------------------------------------------------------------
+\newcommand\ablh{214}
+\newcommand\ablw{450}
+\newcommand\ablrow{3}
+\newcounter{odabl}
+\newenvironment{ablations}[3][214]{\par\vspace{34\px}\noindent\renewcommand\ablh{#1}\renewcommand\ablw{#2}\renewcommand\ablrow{#3}%
+  \setcounter{odabl}{0}\ignorespaces}{\unskip\par}
+\newcommand\ablation[4]{%
+  \unskip%
+  \ifnum\value{odabl}>0 \ifnum\value{odabl}=\ablrow\relax \par\vspace{24\px}\noindent\setcounter{odabl}{0}\else\hspace{28\px}\fi\fi
+  \stepcounter{odabl}%
+  \begin{tikzpicture}[baseline=(current bounding box.north)]
+    \node[anchor=north west, inner sep=0, outer sep=0, fill=mist, rounded corners=14\px, minimum width=\ablw\px, minimum height=\ablh\px,
+          path picture={\fill[sea] (path picture bounding box.north west) rectangle ([yshift=-5\px]path picture bounding box.north east);}]
+      (abl) {\begin{minipage}[t][\fpeval{\ablh-48}\px][t]{\fpeval{\ablw-48}\px}\vspace{0pt}%
+        {\interbold\pxfont{13}{1}\tracking{14}\color{muted}\MakeUppercase{#1}}\par\vspace{10\px}%
+        {\raggedright\headfont\pxfont{22}{1.15}\color{ink}#2\par}\vspace{8\px}%
+        {\raggedright\pxfont{16}{1.4}\color{bodytext}#3\par}%
+      \end{minipage}};
+    % result pill: a node of the same picture (a nested \tikz would inherit the card's size and fill)
+    \node[anchor=south west, fill=signal!10, rounded corners=6\px, inner xsep=12\px, inner ysep=8\px]
+      at ([xshift=24\px, yshift=22\px]abl.south west) {\interbold\pxfont{15}{1}\color{signal}#4};
+  \end{tikzpicture}\ignorespaces}
+% \slidefigure{<image>}{<width px>}{caption}: an image below the content, with a muted caption
+\newcommand\slidefigure[3]{\par\vspace{24\px}\noindent\includegraphics[width=#2\px]{#1}\par\vspace{6\px}\noindent
+  {\raggedright\intermedium\pxfont{14}{1.35}\color{muted}#3\par}}
+
+% ---------------------------------------------------------------------
 %  Video cards (visualization slide): a clickable still with a play button
 %    \begin{videos} \videocard{poster}{link}{LABEL}{caption} \videocard{...} \end{videos}
 %  link: run:videos/<file>.mp4 opens the local file next to the PDF (Acrobat, Skim; Preview ignores it),

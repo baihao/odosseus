@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 412" width="1000" height="412" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <title>odosseus: offline map of the training run, real-time localisation loop</title>
+  <style>
+    .lane { font-size: 13px; font-weight: 700; letter-spacing: 0.06em; }
+    .n { font-size: 14px; font-weight: 600; fill: #1d2733; }
+    .lbl { font-size: 11.5px; fill: #5a6878; }
+    .arrow { stroke: #6b7785; stroke-width: 1.6; fill: none; marker-end: url(#tip); }
+    .box { fill: #ffffff; stroke: #a9b6c4; stroke-width: 1.2; }
+    .step { fill: #ffffff; stroke: #5b8db8; stroke-width: 1.4; }
+    .ckpt { fill: #fff6e0; stroke: #d8a13c; stroke-width: 1.4; }
+    .reloc { fill: #fdf1ef; stroke: #c8735f; stroke-width: 1.4; }
+  </style>
+  <defs>
+    <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7785"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="412" fill="#ffffff"/>
+
+  <!-- OFFLINE -->
+  <rect x="12" y="12" width="300" height="388" rx="12" fill="#f5f7fa" stroke="#d6dde6"/>
+  <text x="32" y="38" class="lane" fill="#24476b">OFFLINE</text>
+
+  <rect x="32" y="56" width="260" height="40" rx="8" class="box"/>
+  <text x="162" y="81" class="n" text-anchor="middle">Training data</text>
+  <line x1="162" y1="96" x2="162" y2="124" class="arrow"/>
+  <rect x="32" y="126" width="260" height="40" rx="8" class="box"/>
+  <text x="162" y="151" class="n" text-anchor="middle">SuperPoint + LightGlue</text>
+  <line x1="162" y1="166" x2="162" y2="194" class="arrow"/>
+  <rect x="32" y="196" width="260" height="40" rx="8" class="ckpt"/>
+  <text x="162" y="221" class="n" text-anchor="middle">3D feature map</text>
+
+  <path d="M292,76 H304 V296 H294" class="arrow"/>
+  <rect x="32" y="276" width="260" height="40" rx="8" class="box"/>
+  <text x="162" y="301" class="n" text-anchor="middle">MegaLoc</text>
+  <line x1="162" y1="316" x2="162" y2="344" class="arrow"/>
+  <rect x="32" y="346" width="260" height="40" rx="8" class="ckpt"/>
+  <text x="162" y="371" class="n" text-anchor="middle">Retrieval database</text>
+
+  <!-- REAL-TIME LOOP -->
+  <rect x="328" y="12" width="660" height="388" rx="12" fill="#f5f8f6" stroke="#d3e0d7"/>
+  <text x="348" y="38" class="lane" fill="#1f5a3d">REAL-TIME LOOP · EVERY IMAGE SET</text>
+
+  <rect x="640" y="56" width="260" height="40" rx="8" class="step"/>
+  <text x="770" y="81" class="n" text-anchor="middle">Predict (dead reckoning)</text>
+  <line x1="770" y1="96" x2="770" y2="124" class="arrow"/>
+  <rect x="640" y="126" width="260" height="40" rx="8" class="step"/>
+  <text x="770" y="151" class="n" text-anchor="middle">Match 3D keypoints</text>
+  <line x1="770" y1="166" x2="770" y2="194" class="arrow"/>
+  <rect x="640" y="196" width="260" height="40" rx="8" class="step"/>
+  <text x="770" y="221" class="n" text-anchor="middle">PnP</text>
+  <line x1="770" y1="236" x2="770" y2="264" class="arrow"/>
+  <rect x="640" y="266" width="260" height="40" rx="8" class="step"/>
+  <text x="770" y="291" class="n" text-anchor="middle">EKF</text>
+  <line x1="770" y1="306" x2="770" y2="344" class="arrow"/>
+  <rect x="640" y="346" width="260" height="40" rx="8" fill="#1f3b5c"/>
+  <text x="770" y="371" text-anchor="middle" font-size="14" font-weight="600" fill="#ffffff">Pose x, y, yaw</text>
+
+  <path d="M900,366 H932 V76 H902" class="arrow"/>
+  <text transform="translate(948,221) rotate(90)" text-anchor="middle" class="lbl">next image set</text>
+
+  <path d="M292,216 H470 V146 H638" class="arrow"/>
+
+  <rect x="340" y="266" width="200" height="40" rx="8" class="reloc"/>
+  <text x="440" y="291" class="n" text-anchor="middle">Relocalise (MegaLoc)</text>
+  <line x1="640" y1="278" x2="542" y2="278" class="arrow"/>
+  <text x="590" y="270" class="lbl" text-anchor="middle">no fix for 1 s</text>
+  <line x1="540" y1="296" x2="638" y2="296" class="arrow"/>
+  <text x="590" y="312" class="lbl" text-anchor="middle">pose</text>
+  <path d="M292,366 H480 V308" class="arrow"/>
+
+  <rect x="884" y="28" width="12" height="12" rx="2" class="ckpt"/>
+  <text x="904" y="38" class="lbl">checkpoint</text>
+</svg>

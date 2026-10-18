@@ -615,7 +615,7 @@ def run(split, out, map_dir='outputs/20_map', cams=tuple(data.CAMS), limit=None,
     os.makedirs(out, exist_ok=True)
     qrun = data.Run(query_root) if query_root else None
     t0 = data.t0_ns(); a, b = data.SPLITS.get(split, (0, 0))
-    if fold is not None:              # cross-validation (docs/laps.md): split = a lap, map = the fold's map laps
+    if fold is not None:              # cross-validation: split = a lap, map = the fold's map laps (data.FOLDS)
         assert split not in data.FOLDS[fold]['map_laps'] or (data.FOLDS[fold].get('day_query') and cfg.get('img_root')), \
             f'{split} is in the map of {fold}'
         windows = data.fold_windows(fold)

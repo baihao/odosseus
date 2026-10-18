@@ -16,29 +16,32 @@
   \quad·\quad The Odosseus logo was generated with ChatGPT (OpenAI)}
 \logoslide
 
-% ====================== SLIDE 2 · SOLUTION (Exp23) ======================
+% ====================== SLIDE 2 · SOLUTION (final method, = ../../assets/approach.svg) ======================
 \begin{odslide}
   \kicker{02}{Our solution}
   \slidetitle{Car state predicts, \highlight{the map corrects}}
-  \slidesub{A causal filter: odometry bridges 0.1 s, cameras give absolute fixes, and weak fixes are trusted less.}
+  \slidesub{A causal filter: dead reckoning carries the pose between frames, camera fixes against the night map correct it.}
 
+  % 5 steps + 4 arrows fill 1408 px: width factors sum to (1408 - 4 x 40) / 292.7 = 4.264
   \begin{pipeline}[210]     % [step height in px]
-    \pipestep{plain}{Offline}{3D Feature map}{SuperPoint on all training frames, triangulated with training poses. 20 M points cached on GPU.}
+    \pipestep{plain}{Offline}{3D feature map}{SuperPoint + LightGlue, triangulated; MegaLoc database.}
     \pipearrow
-    \pipestep{plain}{Predict}{Car-state EKF}{Speed, vx, vy and yaw rate. \textasciitilde observed 2 cm drift per frame, so skipped visual odometry.}
+    \pipestep[0.88]{plain}{Predict}{Automotive Dead reckoning}{Car-state speed and yaw rate carry the pose.}
     \pipearrow
-    \pipestep[1.2]{hl}{Localize}{SuperPoint+LightGlue}{}
+    \pipestep[0.82]{hl}{Match}{3D keypoints}{Map points near the prediction, all 7 cameras.}
     \pipearrow
-    \pipestep[1.2]{new}{Tune}{Gated Filter}{Fixes with few inliers or far from mapped lines get less weight; the car state carries the pose there.}
+    \pipestep[0.7]{hl}{Solve}{PnP}{One robust PnP over all 7 cameras.}
+    \pipearrow
+    \pipestep[0.864]{new}{Update}{EKF}{No fix for 1 s: MegaLoc relocalises the pose.}
   \end{pipeline}
 
   \begin{stats}
-    \stat{0.12}{–0.13 m}{Position RMSE, 6 held-out laps\\(0.156 m without Exp23)}
-    \stat{0.21}{m}{Hardest lap L2, unmapped line\\(0.30 m without Exp23)}
-    \stat{1–2}{s}{Recovery from 3–80 m\\injected pose errors}
-    \stat{41}{ms}{Per 7-camera frame\\on \ph{GPU model}}
+    \stat{0.089}{m}{Position RMSE, held-out\\flying lap L7}
+    \stat{0.30}{m}{Hardest lap L2,\\off the mapped lines}
+    \stat{1–3.4}{s}{Recovery from 3–80 m\\injected pose errors}
+    \stat{37}{ms}{Per 7-camera frame\\on one H100 NVL}
   \end{stats}
-  \slidenote{\textbf{Trade-off:} on the well-mapped tuning lap L5 it costs 0.017–0.026 m, so tuning the weighting on held-out laps is the next step.}
+  \slidenote{\textbf{Relocalisation:} MegaLoc runs only after 1 s without an accepted camera fix; its pose is taken only if the jump is plausible for the time lost or has at least 300 inliers.}
 \end{odslide}
 
 % ====================== SLIDE 3 · ENGINEERING DECISIONS ======================
@@ -62,27 +65,27 @@
   \insight{Key insight}{The floor is the ground truth, not the matcher: every parameter sweep lands at \textbf{0.103–0.108 m}, next to the GT's own \textasciitilde 0.1 m.}
 \end{odslide}
 
-% ====================== SLIDE 4 · FAILURE CASES ======================
-% To add an image: put the file in ./images and give its path as the first argument,
-% e.g. \failcase{images/l2_offline.jpg}{cl}{...}. {} keeps the placeholder.
+% ====================== SLIDE 4 · ABLATIONS AND STRESS TESTS ======================
 \begin{odslide}
-  \kicker{04}{Failure cases}
-  \slidetitle{Where Odosseus \highlight{loses the line}}
+  \kicker{04}{Ablation studies}
+  \slidetitle{Ablations and \highlight{stress tests}}
+  \begin{ablations}[210]{326}{4}    % [card height px]{card width px}{cards per row}
+    \ablation{Cross-validation}{Plausible jumps only}
+      {A jump must fit the time without a fix, or have \ensuremath{\geq} 300 inliers.}
+      {F2/L2: 3.7 \ra{} 0.30 m}
+    \ablation{Kidnap test}{Kidnap recovery}
+      {A bad fix or a long blind stretch, injected into the running filter.}
+      {3–80 m, 20°: 1.0–3.4 s}
+    \ablation{Runtime}{Cached 3D points}
+      {Triangulated once offline; each frame only matches the cached points.}
+      {410 \ra{} 41 ms per frame}
+    \ablation{Odometry}{No visual odometry}
+      {Car-state dead reckoning beats our best camera-only VO (43 m).}
+      {20.5 m over 2 laps}
+  \end{ablations}
 
-  \begin{fails}
-    \failcase{}{\ph{CAM}}{Line no map lap drove}
-      {L2's warm-up line runs up to \textbf{14 m} from every map lap. Matches thin out and the error grows locally.}
-      {1.7–2.4 m locally}
-      {\textbf{Mitigation:} map from all 9 laps; Exp23 down-weights these fixes (L2 0.30 \ra{} 0.21 m).}
-    \failcase{}{\ph{CAM}}{Wrong relocalisation}
-      {Off the mapped lines the filter declared itself lost and jumped \textbf{18 m} to a wrong place.}
-      {L2: 3.7 m RMSE}
-      {\textbf{Fix:} jumps must be plausible against dead reckoning. Open: a wrong fix with 328 inliers can still pass the bypass.}
-    \failcase{}{\ph{CAM}}{Hard left turns}
-      {At \textasciitilde 5 m/s² lateral acceleration the car rolls; we see outward lateral error and heading lag.}
-      {up to 0.45 m}
-      {\textbf{Next:} looser roll/pitch priors when |ay| is large, per-camera weights in turns.}
-  \end{fails}
+  \slidefigure{images/l2_position_lateral_error.png}{1200}
+    {Hardest lap L2 (map without L2, Exp21 run): position error (top) and lateral error (bottom) over the lap. The 1.7 m peak is almost entirely lateral, where the car drives 8.5 m from every map lap.}
 \end{odslide}
 
 % ====================== SLIDE 5 · VISUALIZATION ======================

@@ -1,4 +1,4 @@
-"""Exp21 3-fold cross-validation (docs/laps.md): for a fold, run the online localiser on its two validation laps and on
+"""Exp21 3-fold cross-validation (folds: odo.data.FOLDS): for a fold, run the online localiser on its two validation laps and on
 the tuning lap L5, each anchored at its own first pose, with map = the fold's map laps. Parameters: odo.online.DEFAULT.
     python scripts/exp21_cv.py F1 [--video]"""
 import sys, json; sys.path.insert(0, '.')

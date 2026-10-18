@@ -396,7 +396,7 @@ Robustness checks: gamma 0.5/2, gain 0.4, noise and blur on the query images cha
 0.119 m; injected pose errors of 3–80 m are recovered in 1–2 s.
 
 ### 6.7 Remaining risks and next steps
-* **Lighting.** A daylight test run against a night map is untested. Photometric tests are only a proxy. If matching
+* **Lighting.** A daylight test run against a night map is tested only on synthetic day images (6.8). If matching
   fails, the filter falls back on dead reckoning (about 10 m drift per lap) and relocalises when matching returns.
   Mitigation if test-like data appear: add those images to the map (the map builder takes any run with poses).
 * **Lines not in the map.** A racing line far from every map lap (as L2) or an unmapped pit section costs 0.3–0.7 m
@@ -404,6 +404,32 @@ Robustness checks: gamma 0.5/2, gain 0.4, noise and blur on the query images cha
 * **Hard corners.** The largest errors on well-mapped laps are at high lateral acceleration (outward lateral error,
   heading lag). Next to try, on L5: looser roll/pitch priors when |ay| is large, and per-camera weights in turns.
 * **GT quality at the score.** At the GT-spike spots the score depends on the GT's own error there.
+
+### 6.8 Night → day transfer (Exp24)
+Without day data, we localised synthetic day versions of the night laps (CycleGAN-Turbo, also with lamps removed)
+against the night map. The day versions do not hurt accuracy, but stress tests with 90 % of keypoints dropped or
+overexposure exposed a failure mode: a few weak fixes rotate the heading and the filter drifts by metres. Two rules fix
+it and are now the default: relocalisation must agree with the predicted yaw, and fixes with fewer than 60 inliers
+update position only. Details are in [`outputs/24_day/summary.md`](../outputs/24_day/summary.md).
+
+| F5/L2 (L2 not in map), pos RMSE | Exp21 | final |
+|---|---|---|
+| night | 0.302 m | 0.299 m |
+| day, lamps removed | 0.220 m | 0.189 m |
+| day, lamps removed, 10 % keypoints | 2.457 m | 0.390 m |
+| day, lamps removed, gain 1.6 | 1.243 m | 0.450 m |
+| F7/L2 day (all night laps in map) | – | 0.066 m |
+
+**Lower inlier minimum for a map fix (`min_inl` 30 → 15), cameras cl + cr only, F5/L2.** It accepts many more fixes
+when inliers are scarce, but they are noisy. With the gate and the position-only rule the filter does not break, yet
+there is no clear gain, so the minimum stays at 30.
+
+| F5/L2, cl + cr, pos RMSE | `min_inl` 30 | `min_inl` 15 |
+|---|---|---|
+| night | 0.287 m | 0.287 m |
+| day, lamps removed | 0.265 m | 0.255 m |
+| night, 10 % keypoints | 0.459 m | 0.508 m |
+| day, lamps removed, 10 % keypoints | 0.803 m | 0.808 m |
 
 ---
 

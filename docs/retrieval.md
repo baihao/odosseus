@@ -1,20 +1,33 @@
-# 全局检索与粗定位 `init` — query 的初始位姿是怎么来的
+# 全局检索组件 `odo/retrieval.py` — 全局描述子 → 粗位姿
 
-> 背景：重定位 [`refine_query`](../odo/reloc_pnp.py#L101) 用 triangulation + PnP **精修**出 query 的位姿，
-> 但它需要一个**粗略初值 `init`** 当起点。本文件讲 `init` 是怎么得到的——答案是**全局图像检索**
-> （[`odo/retrieval.py`](../odo/retrieval.py)），不涉及任何三角化/PnP。
+> [`odo/retrieval.py`](../odo/retrieval.py) 是一个**独立的离线组件**：用全局描述子（MegaLoc）检索，把每个 query 帧映射到一个**粗略位姿**（不含任何三角化/PnP 几何）。它的产物被**多个下游复用**，**不只服务重定位**（见 §0.1）。
+>
+> 注意区分：**在线重定位**用的是 [`odo/online.py` 的 `Reloc` 类](../odo/online.py#L443)（另一份代码，只复用了本文件的 `aligned` 多相机对齐辅助函数，[online.py:450](../odo/online.py#L450)）。本文件讲的是**离线 `retrieval.py`**。
 
-命令：
+命令（默认 `qsplit='val'`，即验证圈检索基线）：
 ```bash
 python -m odo.retrieval --desc outputs/10_vpr/desc --model megaloc --cams fl fr r \
-       --out outputs/11_retrieval_megaloc --qsplit tune
+       --out outputs/11_retrieval_megaloc            # 验证圈检索评测（baseline）
+python -m odo.retrieval ... --qsplit tune            # tune 圈（dt 标定用）
 ```
 
 ---
 
 ## 0. 一句话
 
-`init` = 拿 query 图的**全局描述子**（MegaLoc）在数据库里找**最像的 k 张老照片**，取 top1（或 top-k 相似度加权）**那些老照片当时的 GT 位姿**，当作 query 的粗略初始位姿。直觉：“当前这帧最像第 723 号老照片，那张拍摄时车在赛道 (x,y,yaw)，所以当前车大概也在那附近。” 精度只到“赛道这一段”的量级，交给后续 PnP 精修。
+`retrieval.py` 给每个 query 帧产一个**粗位姿**：拿 query 图的**全局描述子**（MegaLoc）在数据库里找**最像的 k 张老照片**，取 top1（或 top-k 相似度加权）**那些老照片当时的 GT 位姿**。直觉：“当前这帧最像第 723 号老照片，那张拍摄时车在赛道 (x,y,yaw)，所以当前车大概也在那附近。” 精度只到“赛道这一段”量级——它**本身就是一种定位方法**（粗），也可当 PnP 的初值。
+
+## 0.1 它服务于谁（不只 reloc）
+
+`retrieval.run` 的产物 `pred.csv`（粗位姿）+ `retrieval.npz`（候选帧）有**三类用途**：
+
+| 用途 | 谁用 | 说明 |
+|---|---|---|
+| **A. 检索定位基线** | `retrieval.run(qsplit='val')` 自身 | 纯检索当一个**baseline**（只检索、不 PnP），用 `recall_at`/`make_report` 评精度（[retrieval.py:91-96](../odo/retrieval.py#L91)）。CLI 默认就是这个。 |
+| **B. 离线 PnP 实验的初值 / 候选** | [`reloc_pnp.main`](../odo/reloc_pnp.py#L163) 读 `retrieval.npz`/`pred.csv`（[L164-166](../odo/reloc_pnp.py#L164)） | 给离线 triangulation+PnP 实验（Exp12）喂初值 `init` + 候选帧；**dt 标定**也走这条（见 [map_build.md 附录 A](map_build.md)）。 |
+| **C. 在线重定位（同源但另一份代码）** | [`online.Reloc`](../odo/online.py#L443) | 实时丢失时检索候选。**不调用 `retrieval.run`**，只复用 `aligned`（[online.py:450](../odo/online.py#L450)）；算法同源（MegaLoc），实现独立。详见 [relocalise.md](relocalise.md)。 |
+
+> 所以“`init`”只是**用途 B** 里对这份粗位姿的称呼。下文 §3 讲的就是用途 B（`reloc_pnp` 如何消费它）；用途 A 是它自己的评测，用途 C 在 relocalise.md。
 
 ---
 
@@ -65,7 +78,9 @@ np.savez('retrieval.npz', tq=tq, best=argmax(S), top=argsort(-S)[:, :50], tdb=td
 
 ---
 
-## 3. `reloc_pnp` 如何消费 `init`
+## 3. 用途 B：离线 PnP 实验（`reloc_pnp`）如何消费 `init`
+
+> 这是 §0.1 的**用途 B**——把检索粗位姿当 PnP 初值。用途 A（检索基线评测）是 `run` 自己算 metrics；用途 C（在线 reloc）见 [relocalise.md](relocalise.md)。
 
 [`reloc_pnp.main`](../odo/reloc_pnp.py#L163) 读 `pred.csv` + `retrieval.npz`：
 ```python
@@ -97,13 +112,13 @@ query 图(多相机)
   → aligned: 各相机描述子对齐到参考时间线
   → similarity: 与数据库老照片的全局描述子算余弦相似度 S（多相机平均）
   → estimate: 取 top-k、cluster_m 内按相似度加权 → 借老照片 GT 位姿得 (x,y,yaw)
-  → pred.csv (init, 粗位姿) + retrieval.npz (候选帧)
+  → pred.csv (粗位姿) + retrieval.npz (候选帧)
         │
-  reloc_pnp: 以 init 为起点，对多个候选做 triangulation + PnP 精修
-        └─ 精修成功 → 精位姿;  全失败 → 回退 init(粗位姿)
+   三类下游（§0.1）:
+   A 检索基线评测（run 自己）  B reloc_pnp 当 PnP 初值/候选  C 在线 online.Reloc（另一份代码）
 ```
 
-**一句话：`init` 是纯图像检索的产物——全局描述子找最像的老照片，借其已知 GT 位姿得到的粗定位；它只负责给 PnP 一个起点，自身不含任何三角化/PnP 几何。**
+**一句话：`odo/retrieval.py` 是一个独立的全局检索组件——用 MegaLoc 全局描述子找最像的老照片、借其已知 GT 位姿得到 query 的粗位姿；这份粗位姿本身是一种（粗）定位基线，也被离线 PnP 实验当初值 `init`。它不含任何三角化/PnP 几何，且**不只服务重定位**；在线重定位是 `online.Reloc`（同源 MegaLoc、独立实现）。**
 
 ---
 
@@ -111,8 +126,10 @@ query 图(多相机)
 
 | 文件 | 作用 |
 |---|---|
-| [`odo/retrieval.py`](../odo/retrieval.py) | 全局检索 → 粗位姿 `pred.csv`（`aligned`/`similarity`/`estimate`/`query_db`/`run`）|
+| [`odo/retrieval.py`](../odo/retrieval.py) | **本文件主角**：全局检索 → 粗位姿 `pred.csv`（`aligned`/`similarity`/`estimate`/`query_db`/`run`）；默认 `qsplit='val'` 做检索基线评测（用途 A）|
 | [`odo/vpr.py`](../odo/vpr.py) | VPR 全局描述子模型（MegaLoc）加载/提取 |
-| [`odo/reloc_pnp.py`](../odo/reloc_pnp.py) | 读 `init` 做 triangulation + PnP 精修；失败回退 `init` |
+| [`odo/reloc_pnp.py`](../odo/reloc_pnp.py) | **用途 B**：读 `pred.csv`/`retrieval.npz` 当初值/候选做离线 PnP（Exp12 / dt 标定）|
+| [`odo/online.py`](../odo/online.py) | **用途 C**：在线重定位 `Reloc`（只复用 `aligned`，候选逻辑自成一份）→ [relocalise.md](relocalise.md) |
 | [`odo/data.py`](../odo/data.py) | `interp_gt`（老照片 GT 位姿）、`SPLITS`/`TUNE_LAP`、`CAMS` |
 | [`docs/map_build.md`](map_build.md) | 建图 + `DT_NS` 标定（含 query/db 划分、sel/n_corr 门槛）|
+| [`docs/relocalise.md`](relocalise.md) | 在线重定位（`online.Reloc`，与本文件同源不同实现）|
